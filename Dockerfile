@@ -12,7 +12,6 @@ COPY tsconfig.json tsconfig.server.json tsconfig.client.json ./
 COPY webpack.config.js ./
 COPY src/ ./src/
 COPY public/ ./public/
-COPY data/ ./data/
 
 # Build server (TypeScript → JS) and client (webpack bundle)
 RUN npm run build
@@ -36,10 +35,7 @@ COPY --from=builder /app/dist/ ./dist/
 # Copy static public assets (index.html, card-art, etc.)
 COPY --from=builder /app/public/ ./public/
 
-# Copy game data files needed at runtime (cards.json, heroes.json, relics.json)
-COPY --from=builder /app/data/ ./data/
-
-
+# Game save files directory (Railway volume should be mounted at /app/db via Railway UI)
 ENV DB_PATH=/app/db
 
 EXPOSE 8080
