@@ -39,8 +39,7 @@ COPY --from=builder /app/public/ ./public/
 # Copy game data files needed at runtime (cards.json, heroes.json, relics.json)
 COPY --from=builder /app/data/ ./data/
 
-# Game save files live in a mounted volume
-VOLUME ["/app/db"]
+
 ENV DB_PATH=/app/db
 
 EXPOSE 8080
