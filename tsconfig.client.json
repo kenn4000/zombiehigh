@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2017",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2017", "DOM"],
+    "outDir": "dist/client",
+    "rootDir": "src",
+    "jsx": "preserve"
+  },
+  "include": ["src/client/**/*", "src/common/**/*"],
+  "exclude": ["src/server/**/*", "node_modules"]
+}

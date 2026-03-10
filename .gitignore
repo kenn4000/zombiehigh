@@ -1,0 +1,7 @@
+node_modules/
+build/
+dist/
+db/
+target/
+*.js.map
+.env.local

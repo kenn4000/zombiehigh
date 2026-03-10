@@ -1,0 +1,9 @@
+node_modules/
+build/
+dist/
+db/
+.env
+*.log
+.git/
+.gitignore
+tests/
