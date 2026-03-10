@@ -14,7 +14,7 @@ import apiHeroesRouter from './routes/ApiHeroes';
 import { WebSocketManager } from './WebSocketManager';
 
 // Ensure db directory exists on startup
-const dbDir = process.env['DB_PATH'] ?? path.join(__dirname, '../../db');
+const dbDir = process.env['DB_PATH'] ?? path.join(__dirname, '../../../db');
 if (!fs.existsSync(dbDir)) {
   fs.mkdirSync(dbDir, { recursive: true });
 }
@@ -23,9 +23,9 @@ const app = express();
 app.use(express.json());
 
 // Serve static client assets
-const clientDir = path.join(__dirname, '../../dist/client');
+const clientDir = path.join(__dirname, '../../../dist/client');
 app.use(express.static(clientDir));
-app.use(express.static(path.join(__dirname, '../../public')));
+app.use(express.static(path.join(__dirname, '../../../public')));
 
 // Health check
 app.get('/api/ping', (_req, res) => {
@@ -44,7 +44,7 @@ app.use(apiHeroesRouter);
 // Uses public/index.html before first client build, dist/client/index.html after
 app.get('*', (_req, res) => {
   const indexFromBuild = path.join(clientDir, 'index.html');
-  const indexFromPublic = path.join(__dirname, '../../public/index.html');
+  const indexFromPublic = path.join(__dirname, '../../../public/index.html');
   const indexPath = fs.existsSync(indexFromBuild) ? indexFromBuild : indexFromPublic;
   res.sendFile(indexPath);
 });
