@@ -40,4 +40,4 @@ ENV DB_PATH=/app/db
 
 EXPOSE 8080
 
-CMD ["node", "build/server/server.js"]
+CMD ["node", "build/server/server/server.js"]
