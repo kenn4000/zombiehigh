@@ -190,33 +190,40 @@
             />
           </div>
 
-          <!-- Opponents on the right -->
-          <player-sidebar
-            v-if="myPlayer && opponentPlayers.length"
-            :players="opponentPlayers"
-            :viewer-id="playerId"
-            :is-my-turn="isMyTurn"
-            :phase="game.phase"
-            class="sidebar--right"
-            @play-card="onPlayCard"
-            @activate-action="onActivateAction"
-            @or-option="onOrOption"
-            @sell-card="onSellCard"
-          />
+          <!-- Right sidebar (collapsible) -->
+          <div class="right-sidebar-wrap" :class="{ 'right-sidebar-wrap--collapsed': rightSidebarCollapsed }">
+            <button class="right-sidebar-tab" :title="rightSidebarCollapsed ? 'Show opponents' : 'Hide opponents'" @click="rightSidebarCollapsed = !rightSidebarCollapsed">
+              {{ rightSidebarCollapsed ? '◀' : '▶' }}
+            </button>
 
-          <!-- Spectator: no split, show everyone on the right -->
-          <player-sidebar
-            v-if="!myPlayer"
-            :players="game.players"
-            :viewer-id="playerId"
-            :is-my-turn="isMyTurn"
-            :phase="game.phase"
-            class="sidebar--right"
-            @play-card="onPlayCard"
-            @activate-action="onActivateAction"
-            @or-option="onOrOption"
-            @sell-card="onSellCard"
-          />
+            <!-- Opponents on the right -->
+            <player-sidebar
+              v-if="myPlayer && opponentPlayers.length"
+              :players="opponentPlayers"
+              :viewer-id="playerId"
+              :is-my-turn="isMyTurn"
+              :phase="game.phase"
+              class="sidebar--right"
+              @play-card="onPlayCard"
+              @activate-action="onActivateAction"
+              @or-option="onOrOption"
+              @sell-card="onSellCard"
+            />
+
+            <!-- Spectator: no split, show everyone on the right -->
+            <player-sidebar
+              v-if="!myPlayer"
+              :players="game.players"
+              :viewer-id="playerId"
+              :is-my-turn="isMyTurn"
+              :phase="game.phase"
+              class="sidebar--right"
+              @play-card="onPlayCard"
+              @activate-action="onActivateAction"
+              @or-option="onOrOption"
+              @sell-card="onSellCard"
+            />
+          </div>
         </div>
 
         <!-- Night choice prompt (shown between zombie phase and draft phase) -->
@@ -248,8 +255,17 @@
           :action-mode="actionMode"
           :actions-remaining="game.actionsRemaining"
           :has-adjacent-zombie="hasAdjacentZombie"
+          :trap-cost="myPlayer ? myPlayer.trapCost : 16"
+          :bait-cost="myPlayer ? myPlayer.baitCost : 5"
+          :barricade-cost="myPlayer ? myPlayer.barricadeCost : 10"
+          :melee-cost="myPlayer ? myPlayer.meleeCost : 1"
+          :move-cost="myPlayer ? myPlayer.moveCost : 3"
+          :active-actions="myPlayer ? myPlayer.activeActions : []"
+          :used-action-names="myPlayer ? myPlayer.usedActionNames : []"
+          :has-starting-action="myPlayer ? myPlayer.hasStartingAction : false"
           @mode-changed="onModeChanged"
           @confirm-action="onConfirmAction"
+          @activate-action="onActivateAction"
         />
 
         <!-- Game log -->
@@ -286,6 +302,7 @@ export default Vue.extend({
       pollTimer: null as ReturnType<typeof setInterval> | null,
       wsConn: null as WebSocket | null,
       wsConnected: false,
+      rightSidebarCollapsed: false,
     };
   },
   computed: {
@@ -357,6 +374,19 @@ export default Vue.extend({
   watch: {
     game(g: GameModel | null) {
       this.actionMode = g?.currentMode ?? '';
+    },
+    'game.activePlayerId'(newId: string): void {
+      if (!this.playerId) return;
+      if (newId === this.playerId && (this.game?.phase === 'action' || this.game?.phase === 'placement')) {
+        this.playBeep(880);
+      }
+    },
+    'game.phase'(newPhase: string): void {
+      if (newPhase === 'drafting') {
+        this.playBeep(660);
+      } else if (newPhase === 'escape' && this.game?.activePlayerId === this.playerId) {
+        this.playBeep(440, 0.25);
+      }
     },
   },
   created() {
@@ -442,6 +472,23 @@ export default Vue.extend({
       ws.onerror = () => {
         ws.close();
       };
+    },
+    playBeep(freq = 880, duration = 0.12): void {
+      try {
+        const AudioCtx: typeof AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+        if (!AudioCtx) return;
+        const ctx = new AudioCtx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.value = freq;
+        osc.type = 'sine';
+        gain.gain.setValueAtTime(0.18, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + duration);
+      } catch { /* audio not available */ }
     },
     async sendInput(input: unknown): Promise<void> {
       if (!this.playerId) return;
@@ -590,6 +637,45 @@ export default Vue.extend({
 .phase-game_over { background: #555; }
 .escape-alert { color: #e74c3c; font-weight: bold; }
 .your-turn { color: #a78bfa; font-weight: bold; }
+.right-sidebar-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  flex-shrink: 0;
+  transition: width 0.25s ease;
+  width: 440px;
+  overflow: hidden;
+}
+.right-sidebar-wrap--collapsed {
+  width: 28px;
+}
+.right-sidebar-tab {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 10;
+  width: 24px;
+  height: 48px;
+  background: #2a2a4a;
+  border: 1px solid #555;
+  border-radius: 4px 0 0 4px;
+  color: #a78bfa;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  flex-shrink: 0;
+}
+.right-sidebar-tab:hover { background: #3a3a6a; }
+.right-sidebar-wrap .sidebar--right {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  margin-left: 28px;
+}
 .main-area {
   display: flex;
   flex: 1;

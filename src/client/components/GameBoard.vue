@@ -186,7 +186,7 @@
       :width="TILE_SIZE"
       :height="TILE_SIZE"
       fill="transparent"
-      :style="{ cursor: (isClickable && !isWallMode) ? 'pointer' : 'default' }"
+      :style="{ cursor: (isClickable && !isWallMode && (!highlightActive || isHighlighted(tile.key))) ? 'pointer' : 'default' }"
       @click="onHexClick(tile.q, tile.r)"
     />
 
@@ -221,6 +221,23 @@
         @click="onEdgeClick(zone.q1, zone.r1, zone.q2, zone.r2)"
       />
     </template>
+    <!-- Layer 9: Room name labels (centred, subtle, rendered above everything except click zones) -->
+    <text
+      v-for="label in roomLabels"
+      :key="'rlabel-' + label.room"
+      :x="label.x"
+      :y="label.y"
+      text-anchor="middle"
+      dominant-baseline="middle"
+      :fill="label.color"
+      font-size="9"
+      font-weight="600"
+      letter-spacing="0.5"
+      opacity="0.55"
+      pointer-events="none"
+      style="text-transform: uppercase; user-select: none;"
+    >{{ label.text }}</text>
+
   </svg>
 </template>
 
@@ -522,7 +539,28 @@ export default Vue.extend({
 
       return chains;
     },
-    /** Hard wall lines — one line per wall flag, deduplicated via a Set. */
+    highlightActive(): boolean {
+      return (this.board.highlightedHexKeys as ReadonlyArray<string>).length > 0;
+    },
+    roomLabels(): Array<{ room: string; text: string; x: number; y: number; color: string }> {
+      // One label per room, positioned at the average cx/cy of its tiles
+      const roomTiles = new Map<string, TileRender[]>();
+      for (const tile of this.tiles as TileRender[]) {
+        const room = TILE_ROOM.get(tile.key);
+        if (!room) continue;
+        if (!roomTiles.has(room)) roomTiles.set(room, []);
+        roomTiles.get(room)!.push(tile);
+      }
+      const labels: Array<{ room: string; text: string; x: number; y: number; color: string }> = [];
+      for (const [room, tiles] of roomTiles) {
+        const entry = ROOMS[room];
+        if (!entry) continue;
+        const x = tiles.reduce((s, t) => s + t.cx, 0) / tiles.length;
+        const y = tiles.reduce((s, t) => s + t.cy, 0) / tiles.length;
+        labels.push({ room, text: entry.label, x, y, color: entry.border });
+      }
+      return labels;
+    },
     wallLines(): WallLine[] {
       const out: WallLine[] = [];
       const seen = new Set<string>();
@@ -594,6 +632,8 @@ export default Vue.extend({
     },
     onHexClick(q: number, r: number): void {
       if (this.isClickable && !this.isWallMode) {
+        const key = `${q},${r}`;
+        if ((this.highlightActive as boolean) && !(this.isHighlighted(key))) return;
         this.$emit('hex-clicked', { q, r });
       }
     },

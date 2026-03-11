@@ -27,6 +27,10 @@ export type PlayerModel = {
   barricadeFailRate: number;
   meleeSuccessRate: number;
   meleeCost: number;
+  moveCost: number;
+  trapCost: number;
+  baitCost: number;
+  barricadeCost: number;
   trapsPlaced: number;
 
   // Current room (used for card playability checks)

@@ -12,13 +12,17 @@
       }"
     >
       <!-- Player header -->
-      <div class="panel-header">
+      <div class="panel-header" @click="p.id !== viewerId && toggleCollapse(p.id)" :style="p.id !== viewerId ? 'cursor:pointer' : ''">
         <span class="color-dot" :style="{ background: p.color }"></span>
         <strong class="panel-name">{{ p.name }}</strong>
         <span v-if="p.heroId" class="hero-badge">{{ formatId(p.heroId) }}</span>
         <span v-for="lockerId in p.lockerIds" :key="lockerId" class="locker-badge" :title="formatId(lockerId)">{{ formatId(lockerId) }}</span>
         <span v-if="p.isActive" class="turn-indicator">▶</span>
+        <span v-if="p.id !== viewerId" class="collapse-btn" :title="collapsedIds[p.id] ? 'Expand' : 'Collapse'">{{ collapsedIds[p.id] ? '▼' : '▲' }}</span>
       </div>
+
+      <!-- Collapsible body (opponents can collapse, own panel always visible) -->
+      <template v-if="!collapsedIds[p.id]">
 
       <!-- Stats grid -->
       <div class="stats-grid">
@@ -74,8 +78,8 @@
         </div>
       </div>
 
-      <!-- Active actions — compact tooltip buttons -->
-      <div v-if="p.activeActions.length > 0" class="section">
+      <!-- Active actions — only show in sidebar for opponent panels; own actions are in the bottom action bar -->
+      <div v-if="p.activeActions.length > 0 && p.id !== viewerId" class="section">
         <div class="section-label">
           Actions
           <span v-if="p.hasStartingAction" class="starting-banner">▶ Starting action required</span>
@@ -211,6 +215,8 @@
           </div>
         </template>
       </div>
+
+      </template><!-- end collapsible body -->
     </div>
   </div>
 </template>
@@ -233,6 +239,7 @@ export default Vue.extend({
   data() {
     return {
       lockerMap: {} as Record<string, LockerApiData>,
+      collapsedIds: {} as Record<string, boolean>,
     };
   },
   async mounted() {
@@ -242,6 +249,9 @@ export default Vue.extend({
     this.lockerMap = lm;
   },
   methods: {
+    toggleCollapse(id: string): void {
+      this.$set(this.collapsedIds, id, !this.collapsedIds[id]);
+    },
     formatId(id: string): string {
       return id
         .split('_')
@@ -389,12 +399,38 @@ export default Vue.extend({
   border: 1px solid #333;
   border-radius: 6px;
   overflow: hidden;
-  transition: border-color 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
 }
-.player-panel--active { border-color: #a78bfa; }
+.player-panel--active {
+  border: 3px solid #a78bfa;
+  background: #1f1a38;
+  box-shadow: 0 0 12px 3px rgba(167,139,250,0.4), inset 0 0 18px rgba(167,139,250,0.06);
+  animation: active-pulse 2s ease-in-out infinite;
+}
 .player-panel--me { border-color: #4a88cc; }
-.player-panel--active.player-panel--me { border-color: #a78bfa; }
-.player-panel--dead { opacity: 0.4; }
+.player-panel--active.player-panel--me {
+  border-color: #a78bfa;
+}
+.player-panel--dead {
+  opacity: 0.55;
+  background: #2a1a1a;
+  border-color: #5a2a2a !important;
+  box-shadow: none !important;
+  animation: none !important;
+}
+.player-panel--dead .panel-header {
+  background: #3a1a1a;
+  border-bottom-color: #5a2a2a;
+}
+.player-panel--dead .panel-name::after {
+  content: ' ☠';
+  color: #c0392b;
+  font-size: 11px;
+}
+@keyframes active-pulse {
+  0%, 100% { box-shadow: 0 0 12px 3px rgba(167,139,250,0.4), inset 0 0 18px rgba(167,139,250,0.06); }
+  50%       { box-shadow: 0 0 20px 6px rgba(167,139,250,0.65), inset 0 0 24px rgba(167,139,250,0.12); }
+}
 
 .panel-header {
   display: flex;
@@ -435,9 +471,22 @@ export default Vue.extend({
   max-width: 90px;
   cursor: default;
 }
+.collapse-btn {
+  margin-left: 4px;
+  font-size: 10px;
+  color: #666;
+  user-select: none;
+}
+.panel-header:hover .collapse-btn { color: #aaa; }
 .turn-indicator {
   color: #a78bfa;
-  font-size: 12px;
+  font-size: 14px;
+  font-weight: bold;
+  animation: blink-arrow 1s step-start infinite;
+}
+@keyframes blink-arrow {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.2; }
 }
 
 .stats-grid {

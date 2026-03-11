@@ -3130,7 +3130,7 @@ export class Game implements IGame {
   }
 
   private getAdjustedBarricadeCost(p: Player): number {
-    let cost = 6;
+    let cost = 10;
     for (const passive of p.activePassives) {
       const icard = CardRegistry.get(passive.name as CardName);
       if (icard?.behavior?.passive?.barricadeCostReduction != null) {
@@ -3786,7 +3786,11 @@ export class Game implements IGame {
       trapSuccessRate: this.getAdjustedTrapSuccessRate(p),
       barricadeFailRate: this.getAdjustedBarricadeFailRate(p),
       meleeSuccessRate: this.getAdjustedMeleeSuccessRate(p),
-      meleeCost: p.meleeCost,
+      meleeCost: this.getAdjustedMeleeCost(p),
+      moveCost: this.getAdjustedMovementCost(p),
+      trapCost: this.getAdjustedTrapCost(p),
+      baitCost: this.getAdjustedBaitCost(p),
+      barricadeCost: this.getAdjustedBarricadeCost(p),
       trapsPlaced,
       currentRoom: getTileRoom(p.position.q, p.position.r),
       heroId: p.selectedHero?.id as HeroId | undefined,
