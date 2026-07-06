@@ -5,27 +5,38 @@
       `card--${card.cardType}`,
       card.cardType === 'action' ? `card--${rewardCategory}` : '',
       card.isPlayable ? 'card--playable' : (card.requirementsMet ? 'card--cant-afford' : 'card--unplayable'),
+      showCardArt ? 'card--art-only' : '',
+      zoomMode === 'hand' ? 'card--zoom-hand' : '',
+      compact ? 'card--compact' : '',
       selected ? 'card--selected' : '',
     ]"
+    :style="cardStyle"
     :title="tooltipText"
+    @mouseenter="onCardHoverEnter"
+    @mouseleave="onCardHoverLeave"
     @click="$emit('card-clicked', card.name)"
   >
     <!-- Cost badge -->
-    <div class="card__cost-badge">
+    <div v-if="!showCardArt" class="card__cost-badge">
       <span v-if="card.adjustedCost !== card.playCost" class="card__cost--adjusted">{{ card.adjustedCost }}</span>
       <span v-else>{{ card.playCost }}</span>
     </div>
 
     <!-- Type badge -->
-    <div class="card__type-badge" :class="card.cardType === 'action' ? `badge--${rewardCategory}` : `badge--${card.cardType}`">
+    <div v-if="!showCardArt" class="card__type-badge" :class="card.cardType === 'action' ? `badge--${rewardCategory}` : `badge--${card.cardType}`">
       {{ card.cardType.toUpperCase() }}
     </div>
 
     <!-- Card name (below badges) -->
-    <div class="card__name">{{ formatName(card.name) }}</div>
+    <div v-if="!showCardArt" class="card__name">{{ formatName(card.name) }}</div>
 
-    <!-- Reward icons (replaces art pane) -->
-    <div class="card__rewards">
+    <!-- Card art (manifest-driven) with robust fallback to the legacy reward pane -->
+    <div v-if="showCardArt" class="card__art" :class="cardArtContainerClass">
+      <img class="card__art-img" :src="cardArtUrl" :alt="formatName(card.name)" @error="onCardArtError" />
+    </div>
+
+    <!-- Reward icons fallback when art is unavailable -->
+    <div v-else class="card__rewards">
       <template v-if="rewardTokens.length">
         <span
           v-for="(rew, i) in rewardTokens"
@@ -38,7 +49,7 @@
     </div>
 
     <!-- Requirement at bottom in red -->
-    <div v-if="card.requirementText" class="card__requirement" :class="card.isPlayable ? '' : 'card__requirement--unmet'">
+    <div v-if="!showCardArt && card.requirementText" class="card__requirement" :class="card.isPlayable ? '' : 'card__requirement--unmet'">
       Req: {{ card.requirementText }}
     </div>
   </div>
@@ -47,6 +58,7 @@
 <script lang="ts">
 import Vue, { PropType } from 'vue';
 import { CardModel } from '../../common/models/CardModel';
+import { resolveCardArtInfo, resolveCardArtUrl } from '../utils/cardArtManifest';
 
 interface RewardToken { label: string; cls: string; }
 
@@ -55,8 +67,38 @@ export default Vue.extend({
   props: {
     card: { type: Object as PropType<CardModel>, required: true },
     selected: { type: Boolean, default: false },
+    zoomMode: { type: String as PropType<'default' | 'hand'>, default: 'default' },
+    compact: { type: Boolean, default: false },
+  },
+  data() {
+    return {
+      cardArtErrored: false as boolean,
+      hoverNudgeX: 0 as number,
+    };
+  },
+  watch: {
+    'card.name'() {
+      this.cardArtErrored = false;
+    },
   },
   computed: {
+    cardArtUrl(): string {
+      return resolveCardArtUrl(this.card);
+    },
+    showCardArt(): boolean {
+      return !!this.cardArtUrl && !this.cardArtErrored;
+    },
+    cardStyle(): Record<string, string> {
+      return {
+        '--zoom-nudge-x': `${this.hoverNudgeX}px`,
+      };
+    },
+    cardArtContainerClass(): Record<string, boolean> {
+      const art = resolveCardArtInfo(this.card);
+      return {
+        'card__art--hero': art.kind === 'hero',
+      };
+    },
     tooltipText(): string {
       const parts: string[] = [];
       if (this.card.description) parts.push(this.card.description);
@@ -132,6 +174,31 @@ export default Vue.extend({
     },
   },
   methods: {
+    onCardHoverEnter(): void {
+      if (!this.showCardArt) { this.hoverNudgeX = 0; return; }
+      const el = this.$el as HTMLElement | null;
+      if (!el) { this.hoverNudgeX = 0; return; }
+      const rect = el.getBoundingClientRect();
+      const scale = 1.8;
+      const extraW = rect.width * (scale - 1);
+      const anchorLeft = this.zoomMode === 'hand' ? rect.width * 0.5 : rect.width * 0.5;
+      const overflowLeft = Math.max(0, extraW * (anchorLeft / rect.width));
+      const overflowRight = Math.max(0, extraW * (1 - anchorLeft / rect.width));
+      const pad = 10;
+      let nudge = 0;
+      const leftAfter = rect.left - overflowLeft;
+      if (leftAfter < pad) nudge += pad - leftAfter;
+      const rightAfter = rect.right + overflowRight;
+      const maxRight = window.innerWidth - pad;
+      if (rightAfter > maxRight) nudge -= (rightAfter - maxRight);
+      this.hoverNudgeX = Math.round(nudge);
+    },
+    onCardHoverLeave(): void {
+      this.hoverNudgeX = 0;
+    },
+    onCardArtError(): void {
+      this.cardArtErrored = true;
+    },
     formatName(name: string): string {
       return name
         .split('_')
@@ -158,10 +225,19 @@ export default Vue.extend({
   font-size: 11px;
   user-select: none;
   padding-top: 28px; /* room for absolute badges */
+  --zoom-nudge-x: 0px;
+}
+.card--compact {
+  width: 130px;
+  min-width: 130px;
+}
+.card--art-only {
+  padding-top: 0;
 }
 .card:hover {
   transform: translateY(-3px);
   box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  z-index: 5;
 }
 .card--playable { border-color: #6a6a9a; }
 .card--playable:hover {
@@ -174,17 +250,20 @@ export default Vue.extend({
 .card--unplayable { opacity: 0.62; cursor: not-allowed; }
 .card--unplayable:hover { transform: none; box-shadow: none; }
 .card--selected {
-  border-color: #4caf50 !important;
-  box-shadow: 0 0 8px rgba(76, 175, 80, 0.5) !important;
+  border-color: #ffd166 !important;
+  outline: 3px solid #ffd166;
+  outline-offset: 1px;
+  box-shadow: 0 0 0 4px rgba(255, 209, 102, 0.45), 0 0 16px rgba(255, 209, 102, 0.6) !important;
   opacity: 1 !important;
+  z-index: 80;
 }
 
 /* Type-specific accent colors */
 .card--instant              { border-top: 3px solid #39a05a; }
-.card--action.card--nice    { border-top: 3px solid #c03030; }
-.card--action.card--cool    { border-top: 3px solid #3060cc; }
-.card--action.card--basic   { border-top: 3px solid #a0a0a0; }
-.card--passive              { border-top: 3px solid #8e44ad; }
+.card--action.card--nice    { border-top: 3px solid #4A2325; }
+.card--action.card--cool    { border-top: 3px solid #4A2325; }
+.card--action.card--basic   { border-top: 3px solid #4A2325; }
+.card--passive              { border-top: 3px solid #1A3644; }
 
 /* Cost badge */
 .card__cost-badge {
@@ -232,6 +311,39 @@ export default Vue.extend({
   border-bottom: 1px solid #333;
   white-space: normal;
   word-break: break-word;
+}
+
+.card__art {
+  width: 100%;
+  aspect-ratio: 5 / 7;
+  overflow: hidden;
+}
+
+.card__art--hero {
+  aspect-ratio: 7 / 5;
+}
+
+.card__art-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #111;
+}
+
+.card--art-only:hover {
+  transform: translate(calc(var(--zoom-nudge-x)), -6px) scale(1.8);
+  z-index: 140;
+  opacity: 1 !important;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.65);
+}
+
+.card--zoom-hand.card--art-only {
+  transform-origin: center bottom;
+}
+
+.card--art-only.card--selected {
+  z-index: 100;
 }
 
 /* Reward icon area (replaces art pane) */

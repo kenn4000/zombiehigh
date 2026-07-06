@@ -30,7 +30,7 @@ export enum CardName {
   // ── C ─────────────────────────────────────────────────────────────────────
   CHANGE_IN_CHARACTER = 'Change in Character',
   CHEAT_SHEET = 'Cheat Sheet',
-  CHECK_ITS_POCKETS = "Check it's Pockets",
+  CHECK_ITS_POCKETS = 'Check Its Pockets',
   CHICKEN_DINNER = 'Chicken Dinner',
   CLAIRVOYANCE = 'Clairvoyance',
   CLASS_CLOWN = 'Class Clown',
@@ -59,7 +59,7 @@ export enum CardName {
   DUMPSTER_DIVING = 'Dumpster Diving',
 
   // ── E ─────────────────────────────────────────────────────────────────────
-  EMBARRASSMENT = 'Embarassment',
+  EMBARRASSMENT = 'Embarrassment',
   EMERGENCY_RETREAT = 'Emergency Retreat',
   ENGINEERING_CLUB = 'Engineering Club',
   ENGINEERING_EXAM_KEY = 'Engineering Exam Key',
@@ -140,7 +140,7 @@ export enum CardName {
   PE_SHORTS = 'PE Shorts',
   PERMISSION_SLIP = 'Permission Slip',
   PHYSICAL_EXERCISE = 'Physical Exercise',
-  PLAGIARISM = 'Plaigarism',
+  PLAGIARISM = 'Plagiarism',
   POCKET_TRAP = 'Pocket Trap',
   POPULARITY = 'Popularity',
   PRACTICAL_JOKE = 'Practical Joke',
@@ -200,7 +200,7 @@ export enum CardName {
 
   // ── U ─────────────────────────────────────────────────────────────────────
   UNDER_THE_TABLE = 'Under the Table',
-  UNDERGROUND_PASSAGEWAY = 'Underground Passageway',
+  UNDERGROUND_PASSAGEWAY = 'Backstage Tunnel',
 
   // ── V ─────────────────────────────────────────────────────────────────────
   VALEDICTORIANS_NOTEBOOK = 'Trap Blueprints',
@@ -209,7 +209,7 @@ export enum CardName {
   // ── W ─────────────────────────────────────────────────────────────────────
   LUNCHLADY_HELPER = "Lunchlady's Helper",
   WALL_IT_OFF = 'Wall it Off!',
-  WAS_THAT_LOAD_BEARING = 'Was that Load Bearing?',
+  WAS_THAT_LOAD_BEARING = 'Failed Project',
   WATER_COOLER = 'Water Cooler',
   WELL_WORN_BOOK = 'Well-worn Book',
 

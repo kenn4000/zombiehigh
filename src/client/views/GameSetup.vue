@@ -10,9 +10,13 @@
           v-for="heroId in player.setupHeroOptionIds"
           :key="heroId"
           class="option-card option-card--hero"
-          :class="{ 'option-card--selected': player.selectedHeroId === heroId }"
+          :class="{ 'option-card--selected': player.selectedHeroId === heroId, 'option-card--art-only': !!heroArtUrl(heroId) }"
           @click="$emit('select-hero', heroId)"
         >
+          <div v-if="heroArtUrl(heroId)" class="option-art option-art--hero">
+            <img :src="heroArtUrl(heroId)" :alt="heroName(heroId)" />
+          </div>
+          <template v-else>
           <div class="card-header">
             <div class="option-icon">{{ heroInitials(heroId) }}</div>
             <div class="card-title-block">
@@ -37,6 +41,7 @@
               <span>{{ ab.effect }}</span>
             </div>
           </div>
+          </template>
         </div>
       </div>
     </div>
@@ -49,9 +54,13 @@
           v-for="lockerId in player.setupLockerOptionIds"
           :key="lockerId"
           class="option-card option-card--locker"
-          :class="{ 'option-card--selected': player.selectedLockerIds.includes(lockerId) }"
+          :class="{ 'option-card--selected': player.selectedLockerIds.includes(lockerId), 'option-card--art-only': !!lockerArtUrl(lockerId) }"
           @click="$emit('select-locker', lockerId)"
         >
+          <div v-if="lockerArtUrl(lockerId)" class="option-art option-art--locker">
+            <img :src="lockerArtUrl(lockerId)" :alt="lockerName(lockerId)" />
+          </div>
+          <template v-else>
           <div class="card-header">
             <div class="option-icon locker-icon">{{ lockerInitials(lockerId) }}</div>
             <div class="card-title-block">
@@ -78,6 +87,7 @@
               <span>{{ ab.effect }}</span>
             </div>
           </div>
+          </template>
         </div>
       </div>
     </div>
@@ -128,6 +138,7 @@ import Vue, { PropType } from 'vue';
 import CardView from '../components/CardView.vue';
 import { PlayerModel } from '../../common/models/PlayerModel';
 import { getHeroes, getLockers, HeroApiData, LockerApiData } from '../api';
+import { resolveHeroArtUrlByName, resolveLockerArtUrlByName } from '../utils/cardArtManifest';
 
 export default Vue.extend({
   name: 'GameSetup',
@@ -183,11 +194,17 @@ export default Vue.extend({
     heroData(id: string): HeroApiData | undefined {
       return this.heroMap[id];
     },
+    heroArtUrl(id: string): string | undefined {
+      return resolveHeroArtUrlByName(this.heroName(id));
+    },
     heroName(id: string): string {
       return this.heroMap[id]?.name ?? this.formatId(id);
     },
     lockerDataById(id: string): LockerApiData | undefined {
       return this.lockerMap[id];
+    },
+    lockerArtUrl(id: string): string | undefined {
+      return resolveLockerArtUrlByName(this.lockerName(id));
     },
     lockerName(id: string): string {
       return this.lockerMap[id]?.name ?? this.formatId(id);
@@ -301,6 +318,58 @@ export default Vue.extend({
   gap: 6px;
   width: 220px;
   transition: border-color 0.15s, background 0.15s;
+}
+.option-card--art-only {
+  padding: 0;
+  gap: 0;
+  width: auto;
+  overflow: hidden;
+  position: relative;
+  z-index: 1;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+  transform-origin: center center;
+}
+.option-card--hero.option-card--art-only {
+  width: 231px;
+}
+.option-card--locker.option-card--art-only {
+  width: 165px;
+}
+.option-art {
+  width: 100%;
+  overflow: hidden;
+  border-radius: 0;
+  border: 0;
+  background: #111;
+}
+.option-art--hero {
+  aspect-ratio: 7 / 5;
+}
+.option-art--locker {
+  aspect-ratio: 5 / 7;
+}
+.option-art > img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  transition: transform 0.18s ease;
+  transform-origin: center center;
+}
+.option-card--art-only:hover {
+  transform: translateY(-6px) scale(1.8);
+  z-index: 140;
+  opacity: 1 !important;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.65);
+}
+.option-card--art-only.option-card--selected {
+  outline: 3px solid #ffd166;
+  outline-offset: 1px;
+  box-shadow: 0 0 0 4px rgba(255, 209, 102, 0.45), 0 0 16px rgba(255, 209, 102, 0.6);
+  z-index: 100;
+}
+.option-card--art-only:hover .option-art > img {
+  transform: scale(1.02);
 }
 .option-card:hover { background: #252540; border-color: #6a6aaa; }
 .option-card--selected { border-color: #a78bfa; background: #2a1e4e; }

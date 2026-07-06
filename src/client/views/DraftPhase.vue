@@ -102,6 +102,9 @@ export default Vue.extend({
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  overflow: visible;
+  padding: 10px 4px 20px;
+  margin: -10px -4px -12px;
 }
 .draft-footer {
   display: flex;

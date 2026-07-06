@@ -38,6 +38,8 @@ export { HeroData, LockerData };
 export const STARTING_CARD_OFFER_COUNT = 10;
 export const STARTING_CARD_KEEP_COST_GOLD = 4;
 export const DRAFT_CARD_COST_GOLD = 4;
+export const MAX_SETUP_HERO_OPTIONS = 4;
+export const MAX_SETUP_LOCKER_OPTIONS = 6;
 
 export class DraftManager {
   private heroPool: HeroData[] = [];
@@ -69,8 +71,8 @@ export class DraftManager {
     const alive = players.filter(p => p.isAlive);
     if (alive.length === 0) return;
 
-    const heroesPerPlayer = Math.floor(11 / alive.length);
-    const lockersPerPlayer = Math.floor(21 / alive.length);
+    const heroesPerPlayer = Math.min(MAX_SETUP_HERO_OPTIONS, Math.floor(11 / alive.length));
+    const lockersPerPlayer = Math.min(MAX_SETUP_LOCKER_OPTIONS, Math.floor(21 / alive.length));
 
     for (const p of alive) {
       p.clearSetupDraftState();

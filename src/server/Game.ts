@@ -759,6 +759,12 @@ export class Game implements IGame {
       || this.pendingFreeMelee || this.pendingJumpOver;
     if (!p || p !== this.getCurrentPlayer() || (this.actionsRemaining <= 0 && !hasPendingFreePlacement)) return;
 
+    // Starting actions must be activated before regular mode-based actions.
+    if (!hasPendingFreePlacement && p.activeActions.some(c => c.name.includes('(Starting Action)'))) {
+      this.log(`${p.name}: Use your starting action first.`);
+      return;
+    }
+
     // Jump-over resolution — handled before the mode switch so it works regardless of currentMode
     if (this.pendingJumpOver) {
       const validJumps = this.getJumpOverHexes(p);
@@ -1034,6 +1040,16 @@ export class Game implements IGame {
     const p = this.getPlayerById(playerId);
     if (!p || !p.isBot || p !== this.getCurrentPlayer()) return;
     if (!p.isAlive || this.isGameOver()) return;
+
+    // Starting actions are mandatory before any regular actions.
+    const pendingStartingAction = p.activeActions.find(c => c.name.includes('(Starting Action)'));
+    if (pendingStartingAction) {
+      this.activateCardAction(playerId, pendingStartingAction.name as CardName);
+      if (p === this.getCurrentPlayer() && !this.isGameOver()) {
+        setTimeout(() => this.autoResolveAITurn(playerId), 100);
+      }
+      return;
+    }
 
     // Resolve highlighted pending board interactions (e.g. Spatial Swap target selection).
     if (this.pendingInteraction && this.pendingInteraction.playerId === playerId) {
@@ -1715,7 +1731,7 @@ export class Game implements IGame {
           this.pendingInteraction = undefined;
           break;
         }
-        // Handle teleport_to_room:* (e.g. Underground Passageway → Janitor's Closet)
+        // Handle teleport_to_room:* (e.g. Backstage Tunnel → Janitor's Closet)
         if (pi.type.startsWith('teleport_to_room:')) {
           if (!player) { this.pendingInteraction = undefined; break; }
           const targetRoom = pi.type.slice('teleport_to_room:'.length);

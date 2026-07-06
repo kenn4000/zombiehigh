@@ -158,6 +158,8 @@
             v-for="c in p.temporaryHand"
             :key="c.name"
             :card="c"
+            zoom-mode="hand"
+            :compact="true"
             @card-clicked="onCardClicked($event)"
           />
         </div>
@@ -181,6 +183,8 @@
               v-for="c in p.cardsInHand"
               :key="c.name"
               :card="c"
+              zoom-mode="hand"
+              :compact="true"
               @card-clicked="onCardClicked($event)"
             />
           </div>
@@ -191,7 +195,7 @@
           <div v-if="playableHand(p).length > 0" class="hand-row-label">Playable</div>
           <div v-if="playableHand(p).length > 0" class="card-row">
             <div v-for="c in playableHand(p)" :key="c.name" class="card-with-sell">
-              <card-view :card="c" @card-clicked="onCardClicked($event)" />
+              <card-view :card="c" zoom-mode="hand" :compact="true" @card-clicked="onCardClicked($event)" />
               <button
                 v-if="isMyTurn && phase === 'action'"
                 class="sell-btn"
@@ -204,7 +208,7 @@
           <div v-if="unavailableHand(p).length > 0" class="hand-row-label hand-row-label--dim">Unavailable</div>
           <div v-if="unavailableHand(p).length > 0" class="card-row">
             <div v-for="c in unavailableHand(p)" :key="c.name" class="card-with-sell">
-              <card-view :card="c" @card-clicked="onCardClicked($event)" />
+              <card-view :card="c" zoom-mode="hand" :compact="true" @card-clicked="onCardClicked($event)" />
               <button
                 v-if="isMyTurn && phase === 'action'"
                 class="sell-btn"
@@ -388,6 +392,7 @@ export default Vue.extend({
   width: 440px;
   min-width: 440px;
   overflow-y: auto;
+  overflow-x: visible;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -398,7 +403,7 @@ export default Vue.extend({
   background: #1a1a2e;
   border: 1px solid #333;
   border-radius: 6px;
-  overflow: hidden;
+  overflow: visible;
   transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
 }
 .player-panel--active {
@@ -532,6 +537,7 @@ export default Vue.extend({
 .section {
   border-top: 1px solid #222;
   padding: 4px 8px 6px;
+  overflow: visible;
 }
 .section-label {
   font-size: 10px;
@@ -550,8 +556,10 @@ export default Vue.extend({
   display: flex;
   flex-wrap: nowrap;
   overflow-x: auto;
+  overflow-y: visible;
   gap: 4px;
-  padding-bottom: 4px;
+  padding: 8px 2px 12px;
+  margin: -8px -2px -6px;
 }
 .card-with-sell {
   display: flex;
