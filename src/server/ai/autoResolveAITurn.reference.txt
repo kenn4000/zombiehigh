@@ -1,0 +1,99 @@
+// This is a helper file to show the updated autoResolveAITurn logic
+
+/*
+Updated autoResolveAITurn implementation:
+
+  public autoResolveAITurn(playerId: PlayerId): void {
+    const p = this.getPlayerById(playerId);
+    if (!p || !p.isBot || p !== this.getCurrentPlayer()) return;
+    if (!p.isAlive || this.isGameOver()) return;
+
+    // Create AI decision engine
+    const aiPlayer = new AIPlayer(p, this);
+
+    // Get next decision
+    const decision = aiPlayer.decideTurnAction();
+
+    // Log AI decision
+    this.log(`${p.name} (AI-${p.difficultyLevel}): ${decision.reason || 'deciding...'}`);
+
+    // Execute decision
+    switch (decision.actionType) {
+      case 'M': {
+        if (decision.targetHex) {
+          this.processAction(playerId, decision.targetHex);
+          // Schedule next AI action after a small delay (prevent stack overflow)
+          if (p === this.getCurrentPlayer() && this.actionsRemaining > 0 && !this.isGameOver()) {
+            setTimeout(() => this.autoResolveAITurn(playerId), 100);
+          }
+        }
+        break;
+      }
+      case 'T': {
+        if (decision.targetHex) {
+          this.setMode('T');
+          this.processAction(playerId, decision.targetHex);
+          // Schedule next action
+          if (p === this.getCurrentPlayer() && this.actionsRemaining > 0 && !this.isGameOver()) {
+            setTimeout(() => this.autoResolveAITurn(playerId), 100);
+          }
+        }
+        break;
+      }
+      case 'B': {
+        if (decision.targetHex) {
+          this.setMode('B');
+          this.processAction(playerId, decision.targetHex);
+          // Schedule next action
+          if (p === this.getCurrentPlayer() && this.actionsRemaining > 0 && !this.isGameOver()) {
+            setTimeout(() => this.autoResolveAITurn(playerId), 100);
+          }
+        }
+        break;
+      }
+      case 'W': {
+        // Barricade placement requires two hex clicks (first hex, then adjacent hex)
+        if (decision.targetHex) {
+          if (this.firstBarricadeHex === undefined) {
+            // First hex: set the barrier start
+            this.setMode('W');
+            this.firstBarricadeHex = decision.targetHex;
+            this.log(`${p.name} (AI): Selected first barricade edge`);
+            // Schedule next action to select second hex
+            if (p === this.getCurrentPlayer() && !this.isGameOver()) {
+              setTimeout(() => this.autoResolveAITurn(playerId), 100);
+            }
+          } else {
+            // Second hex: complete the barricade placement
+            this.processAction(playerId, decision.targetHex);
+            // Schedule next action
+            if (p === this.getCurrentPlayer() && this.actionsRemaining > 0 && !this.isGameOver()) {
+              setTimeout(() => this.autoResolveAITurn(playerId), 100);
+            }
+          }
+        }
+        break;
+      }
+      case 'A': {
+        if (decision.targetHex) {
+          this.setMode('A');
+          this.processAction(playerId, decision.targetHex);
+          // Schedule next action
+          if (p === this.getCurrentPlayer() && this.actionsRemaining > 0 && !this.isGameOver()) {
+            setTimeout(() => this.autoResolveAITurn(playerId), 100);
+          }
+        }
+        break;
+      }
+      case 'DEFER': {
+        this.deferTurn(playerId);
+        break;
+      }
+      case 'PASS':
+      default: {
+        this.passTurn(playerId);
+        break;
+      }
+    }
+  }
+*/

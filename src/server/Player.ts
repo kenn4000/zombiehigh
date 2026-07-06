@@ -8,6 +8,8 @@ export class Player {
   readonly id: PlayerId;
   readonly name: string;
   readonly color: Color;
+  readonly isBot: boolean;
+  readonly difficultyLevel: 'easy' | 'normal' | 'hard';
 
   // Resources
   gold: number = 0;
@@ -58,12 +60,14 @@ export class Player {
   /** When > 0, player must select this many cards from temporaryHand to keep. */
   pendingDrawKeepCount: number = 0;
 
-  constructor(id: PlayerId, name: string, color: Color, position: HexCoordinate) {
+  constructor(id: PlayerId, name: string, color: Color, position: HexCoordinate, isBot: boolean = false, difficultyLevel: 'easy' | 'normal' | 'hard' = 'normal') {
     this.id = id;
     this.name = name;
     this.color = color;
     this.position = position;
     this.startPosition = position;
+    this.isBot = isBot;
+    this.difficultyLevel = difficultyLevel;
   }
 
   get isAlive(): boolean { return this.hitPoints > 0; }

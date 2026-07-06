@@ -117,10 +117,22 @@
           <!-- Score-over-time chart -->
           <div v-if="game.nightScoreHistory && game.nightScoreHistory.length > 0" class="score-chart-wrap">
             <h2 class="score-chart__title">Score per Night</h2>
-            <svg class="score-chart" :viewBox="`0 0 ${chartW} ${chartH}`" :width="chartW" :height="chartH">
+            <svg class="score-chart" :viewBox="`0 0 ${chartW} ${chartH}`" preserveAspectRatio="xMidYMid meet">
+              <!-- Horizontal gridlines + Y-axis labels -->
+              <g v-for="(yl, yi) in yLabels" :key="'ygrid'+yi">
+                <line
+                  :x1="pad" :y1="scoreY(yl, chartMaxScore())"
+                  :x2="chartW - pad" :y2="scoreY(yl, chartMaxScore())"
+                  stroke="#2a2a4a" stroke-width="1"
+                />
+                <text
+                  :x="pad - 4" :y="scoreY(yl, chartMaxScore()) + 4"
+                  text-anchor="end" font-size="10" fill="#888"
+                >{{ yl }}</text>
+              </g>
               <!-- Axes -->
-              <line :x1="pad" :y1="pad" :x2="pad" :y2="chartH - pad" stroke="#aaa" stroke-width="1"/>
-              <line :x1="pad" :y1="chartH - pad" :x2="chartW - pad" :y2="chartH - pad" stroke="#aaa" stroke-width="1"/>
+              <line :x1="pad" :y1="pad" :x2="pad" :y2="chartH - pad" stroke="#666" stroke-width="1"/>
+              <line :x1="pad" :y1="chartH - pad" :x2="chartW - pad" :y2="chartH - pad" stroke="#666" stroke-width="1"/>
               <!-- Night labels -->
               <text
                 v-for="n in game.nightScoreHistory.length"
@@ -147,15 +159,17 @@
                 :key="pt.key"
                 :cx="pt.x"
                 :cy="pt.y"
-                r="3"
+                r="3.5"
                 :fill="pt.color"
               />
-              <!-- Legend -->
-              <g v-for="(pid, li) in chartPlayerIds" :key="'leg'+pid">
-                <rect :x="pad + li * 100" :y="8" width="12" height="12" :fill="playerColor(pid)" rx="2"/>
-                <text :x="pad + li * 100 + 16" y="19" font-size="11" fill="#ccc">{{ playerName(pid) }}</text>
-              </g>
             </svg>
+            <!-- Legend below chart -->
+            <div class="score-legend">
+              <span v-for="pid in chartPlayerIds" :key="'leg'+pid" class="score-legend-entry">
+                <span class="score-legend-dot" :style="{ background: playerColor(pid) }"></span>
+                {{ playerName(pid) }}
+              </span>
+            </div>
           </div>
 
           <button class="lobby-btn" @click="returnToLobby">Return to Lobby</button>
@@ -333,9 +347,19 @@ export default Vue.extend({
         (a.survivalPoints + Math.max(a.nicePoints, a.coolPoints))
       );
     },
-    chartW(): number { return 600; },
-    chartH(): number { return 220; },
-    pad(): number { return 40; },
+    chartW(): number { return 620; },
+    chartH(): number { return 240; },
+    pad(): number { return 44; },
+    yLabels(): number[] {
+      const max = this.chartMaxScore();
+      if (max <= 0) return [0];
+      // ~4-5 evenly spaced nice labels
+      const step = Math.ceil(max / 4);
+      const labels: number[] = [];
+      for (let v = 0; v <= max; v += step) labels.push(v);
+      if (labels[labels.length - 1] < max) labels.push(Math.ceil(max / step) * step);
+      return labels;
+    },
     chartPlayerIds(): string[] {
       if (!this.game?.nightScoreHistory?.length) return [];
       const ids = new Set<string>();
@@ -803,19 +827,44 @@ export default Vue.extend({
 .score-chart-wrap {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   gap: 8px;
+  width: 100%;
+  max-width: 700px;
 }
 .score-chart__title {
   font-size: 16px;
   color: #a0a0c0;
   margin: 0;
+  text-align: center;
 }
 .score-chart {
+  width: 100%;
+  height: auto;
   background: #10101e;
   border: 1px solid #333;
   border-radius: 6px;
-  overflow: visible;
+  display: block;
+}
+.score-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  justify-content: center;
+  padding: 4px 0;
+}
+.score-legend-entry {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: #ccc;
+}
+.score-legend-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 .lobby-btn {
   padding: 10px 28px;

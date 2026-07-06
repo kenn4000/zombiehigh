@@ -13,7 +13,7 @@
         <button v-if="playerRows.length > 1" class="btn-remove" @click="removePlayer(i)">✕</button>
       </div>
       <div class="row-actions">
-        <button v-if="playerRows.length < 5" class="btn btn--secondary" @click="addPlayer">+ Add Player</button>
+        <button v-if="playerRows.length < 5 - cpuOpponentCount" class="btn btn--secondary" @click="addPlayer">+ Add Player</button>
         <button class="btn btn--primary" :disabled="creating" @click="createGame">
           {{ creating ? 'Creating...' : 'Create Game' }}
         </button>
@@ -23,6 +23,26 @@
           <input type="checkbox" v-model="firstCardFreeNightDraft" />
           <span>First card of each nightly draft is free</span>
         </label>
+        <div class="setting-inline">
+          <label for="human-count">Human players</label>
+          <select id="human-count" :value="playerRows.length" class="select select--compact" @change="onHumanCountChanged">
+            <option v-for="n in getHumanOptions()" :key="`hum-${n}`" :value="n">{{ n }}</option>
+          </select>
+        </div>
+        <div class="setting-inline">
+          <label for="cpu-count">CPU opponents</label>
+          <select id="cpu-count" v-model.number="cpuOpponentCount" class="select select--compact">
+            <option v-for="n in getCpuOptions()" :key="`cpu-${n}`" :value="n">{{ n }}</option>
+          </select>
+        </div>
+        <div class="setting-inline" v-if="cpuOpponentCount > 0">
+          <label for="cpu-difficulty">CPU difficulty</label>
+          <select id="cpu-difficulty" v-model="cpuDifficultyLevel" class="select select--compact">
+            <option value="easy">easy</option>
+            <option value="normal">normal</option>
+            <option value="hard">hard</option>
+          </select>
+        </div>
       </div>
     </div>
 
@@ -65,13 +85,19 @@ type CreateResponse = {
   spectatorUrl: string;
 };
 
+type CreatePlayerPayload = {
+  name: string;
+  color: string;
+  isBot?: boolean;
+  difficultyLevel?: 'easy' | 'normal' | 'hard';
+};
+
 export default Vue.extend({
   name: 'LobbyView',
   data() {
     return {
       playerRows: [
         { name: 'Player 1', color: 'red' },
-        { name: 'Player 2', color: 'blue' },
       ] as Array<{ name: string; color: string }>,
       colors: ['red', 'blue', 'green', 'yellow', 'cyan', 'magenta', 'orange', 'purple'],
       creating: false,
@@ -80,25 +106,84 @@ export default Vue.extend({
       spectatorUrl: '',
       existingGames: [] as GameSummary[],
       firstCardFreeNightDraft: false,
+      cpuOpponentCount: 0,
+      cpuDifficultyLevel: 'normal' as 'easy' | 'normal' | 'hard',
     };
   },
   created() {
     this.loadGames();
   },
   methods: {
+    nextAvailableColor(preferredIndex: number): string {
+      const usedColors = new Set(this.playerRows.map(p => p.color));
+      const preferred = this.colors[preferredIndex % this.colors.length];
+      if (preferred && !usedColors.has(preferred)) return preferred;
+      return this.colors.find(c => !usedColors.has(c)) ?? this.colors[preferredIndex % this.colors.length];
+    },
+    getHumanOptions(): number[] {
+      const maxHumans = Math.max(1, 5 - this.cpuOpponentCount);
+      return Array.from({ length: maxHumans }, (_, i) => i + 1);
+    },
+    onHumanCountChanged(event: Event): void {
+      const target = event.target as HTMLSelectElement;
+      const count = Math.max(1, Math.min(5 - this.cpuOpponentCount, Number(target.value) || 1));
+      this.setHumanPlayerCount(count);
+    },
+    setHumanPlayerCount(count: number): void {
+      while (this.playerRows.length < count) {
+        const idx = this.playerRows.length;
+        this.playerRows.push({
+          name: `Player ${idx + 1}`,
+          color: this.nextAvailableColor(idx),
+        });
+      }
+      while (this.playerRows.length > count) {
+        this.playerRows.pop();
+      }
+      this.clampCpuOpponents();
+    },
     addPlayer(): void {
-      const colors = ['green', 'yellow', 'cyan', 'magenta', 'orange', 'purple'];
-      this.playerRows.push({ name: `Player ${this.playerRows.length + 1}`, color: colors[this.playerRows.length - 2] ?? 'green' });
+      const maxHumans = 5 - this.cpuOpponentCount;
+      if (this.playerRows.length >= maxHumans) return;
+      const idx = this.playerRows.length;
+      this.playerRows.push({ name: `Player ${idx + 1}`, color: this.nextAvailableColor(idx) });
+      this.clampCpuOpponents();
     },
     removePlayer(i: number): void {
       this.playerRows.splice(i, 1);
+      this.clampCpuOpponents();
+    },
+    clampCpuOpponents(): void {
+      const maxCpu = Math.max(0, 5 - this.playerRows.length);
+      if (this.cpuOpponentCount > maxCpu) this.cpuOpponentCount = maxCpu;
+    },
+    getCpuOptions(): number[] {
+      const maxCpu = Math.max(0, 5 - this.playerRows.length);
+      return Array.from({ length: maxCpu + 1 }, (_, i) => i);
+    },
+    buildCpuPlayers(): CreatePlayerPayload[] {
+      const usedColors = new Set(this.playerRows.map(p => p.color));
+      const botPlayers: CreatePlayerPayload[] = [];
+      for (let i = 0; i < this.cpuOpponentCount; i++) {
+        const color = this.colors.find(c => !usedColors.has(c)) ?? this.colors[(this.playerRows.length + i) % this.colors.length];
+        usedColors.add(color);
+        botPlayers.push({
+          name: `CPU ${i + 1}`,
+          color,
+          isBot: true,
+          difficultyLevel: this.cpuDifficultyLevel,
+        });
+      }
+      return botPlayers;
     },
     async createGame(): Promise<void> {
       this.error = null;
       this.creating = true;
       try {
+        const humanPlayers: CreatePlayerPayload[] = this.playerRows.map(p => ({ name: p.name, color: p.color }));
+        const cpuPlayers = this.buildCpuPlayers();
         const res = await apiPost<CreateResponse>('/api/game', {
-          players: this.playerRows.map(p => ({ name: p.name, color: p.color })),
+          players: [...humanPlayers, ...cpuPlayers],
           settings: { firstCardFreeNightDraft: this.firstCardFreeNightDraft },
         });
         this.createdLinks = res.playerUrls;
@@ -194,8 +279,21 @@ h2 { font-size: 1.1rem; margin-bottom: 14px; color: #ccc; }
   cursor: pointer;
   color: #ccc;
   font-size: 13px;
+  margin-bottom: 8px;
 }
 .setting-toggle input[type="checkbox"] { accent-color: #a78bfa; width: 16px; height: 16px; cursor: pointer; }
+.setting-inline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+  color: #ccc;
+  font-size: 13px;
+}
+.select--compact {
+  min-width: 120px;
+}
 .btn {
   padding: 8px 16px;
   border-radius: 4px;

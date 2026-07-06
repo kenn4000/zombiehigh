@@ -63,6 +63,55 @@ export type SerializedBoard = {
   baits: Array<{ hexKey: string; ownerId: PlayerId }>;
 };
 
+export type SerializedCardPlayEvent = {
+  playerId: PlayerId;
+  playerName: string;
+  cardName: string;
+  source: 'play' | 'activate';
+  generation: number;
+  turnIndex: number;
+  atMs: number;
+};
+
+export type SerializedFinalScore = {
+  playerId: PlayerId;
+  playerName: string;
+  survivalPoints: number;
+  nicePoints: number;
+  coolPoints: number;
+  finalScore: number;
+  isAlive: boolean;
+  rank: number;
+};
+
+export type SerializedPlayerTrackingMetrics = {
+  playerId: PlayerId;
+  playerName: string;
+  heroId?: HeroId;
+  heroName?: string;
+  stepsTaken: number;
+  trapsBuilt: number;
+  barricadesBuilt: number;
+  cardsBought: number;
+  cardsBoughtByName: Array<{ cardName: string; count: number }>;
+  cardsPlayed: number;
+  cardsActivated: number;
+  cardsPlayedByName: Array<{ cardName: string; count: number }>;
+  finalSP: number;
+  finalNP: number;
+  finalCP: number;
+  finalScore: number;
+  rank?: number;
+};
+
+export type SerializedTracking = {
+  gameLog: string[];
+  cardsPlayedByPlayer: SerializedCardPlayEvent[];
+  playerMetricsByPlayer?: SerializedPlayerTrackingMetrics[];
+  finalScoresByPlayer?: SerializedFinalScore[];
+  completedAtMs?: number;
+};
+
 export type SerializedGame = {
   id: GameId;
   phase: Phase;
@@ -87,6 +136,7 @@ export type SerializedGame = {
   zombies: SerializedZombie[];
   deck: SerializedCard[];
   gameLog: string[];
+  tracking?: SerializedTracking;
   createdAtMs: number;
   lastSaveId: number;
   settings?: { firstCardFreeNightDraft: boolean };

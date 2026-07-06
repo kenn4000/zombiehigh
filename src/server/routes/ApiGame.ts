@@ -19,7 +19,15 @@ const START_POSITIONS: [number, number][] = [
 ];
 
 router.post('/api/game', (req: Request, res: Response) => {
-  const body = req.body as { players?: Array<{ name: string; color: Color }>; settings?: { firstCardFreeNightDraft?: boolean } };
+  const body = req.body as {
+    players?: Array<{
+      name: string;
+      color: Color;
+      isBot?: boolean;
+      difficultyLevel?: 'easy' | 'normal' | 'hard';
+    }>;
+    settings?: { firstCardFreeNightDraft?: boolean };
+  };
   if (!body.players || body.players.length < 1 || body.players.length > 5) {
     res.status(400).json({ error: 'Provide 1–5 players' });
     return;
@@ -29,11 +37,15 @@ router.post('/api/game', (req: Request, res: Response) => {
   const board = new Board();
   const players: Player[] = body.players.map((pd, i) => {
     const pos = START_POSITIONS[i];
+    const isBot = pd.isBot ?? false;
+    const difficultyLevel = pd.difficultyLevel ?? 'normal';
     return new Player(
       generatePlayerId(),
       pd.name,
       pd.color,
       new HexCoordinate(pos[0], pos[1]),
+      isBot,
+      difficultyLevel,
     );
   });
 
@@ -41,7 +53,7 @@ router.post('/api/game', (req: Request, res: Response) => {
   if (body.settings?.firstCardFreeNightDraft) game.settings.firstCardFreeNightDraft = true;
   GameLoader.addGame(game);
 
-  const playerUrls = players.map(p => ({
+  const playerUrls = players.filter(p => !p.isBot).map(p => ({
     name: p.name,
     playerId: p.id,
     url: `/game/${gameId}?player=${p.id}`,
@@ -66,6 +78,20 @@ router.get('/api/game/:gameId', (req: Request, res: Response) => {
     return;
   }
   res.json(game.toModel('' as PlayerId));
+});
+
+router.get('/api/game/:gameId/tracking', (req: Request, res: Response) => {
+  const { gameId } = req.params;
+  if (!gameId || !isGameId(gameId)) {
+    res.status(400).json({ error: 'Invalid gameId' });
+    return;
+  }
+  const game = GameLoader.getInstance(gameId);
+  if (!game) {
+    res.status(404).json({ error: 'Game not found' });
+    return;
+  }
+  res.json(game.getTrackingData());
 });
 
 export default router;

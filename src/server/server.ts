@@ -13,8 +13,24 @@ import apiSpectatorRouter from './routes/ApiSpectator';
 import apiHeroesRouter from './routes/ApiHeroes';
 import { WebSocketManager } from './WebSocketManager';
 
+function resolveProjectRoot(): string {
+  const candidates = [
+    process.cwd(),
+    path.resolve(__dirname, '../../'),
+    path.resolve(__dirname, '../../../'),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(candidate, 'package.json'))) {
+      return candidate;
+    }
+  }
+  return process.cwd();
+}
+
+const projectRoot = resolveProjectRoot();
+
 // Ensure db directory exists on startup
-const dbDir = process.env['DB_PATH'] ?? path.join(__dirname, '../../../db');
+const dbDir = process.env['DB_PATH'] ?? path.join(projectRoot, 'db');
 if (!fs.existsSync(dbDir)) {
   fs.mkdirSync(dbDir, { recursive: true });
 }
@@ -23,9 +39,9 @@ const app = express();
 app.use(express.json());
 
 // Serve static client assets
-const clientDir = path.join(__dirname, '../../../dist/client');
+const clientDir = path.join(projectRoot, 'dist/client');
 app.use(express.static(clientDir));
-app.use(express.static(path.join(__dirname, '../../../public')));
+app.use(express.static(path.join(projectRoot, 'public')));
 
 // Health check
 app.get('/api/ping', (_req, res) => {
@@ -44,7 +60,7 @@ app.use(apiHeroesRouter);
 // Uses public/index.html before first client build, dist/client/index.html after
 app.get('*', (_req, res) => {
   const indexFromBuild = path.join(clientDir, 'index.html');
-  const indexFromPublic = path.join(__dirname, '../../../public/index.html');
+  const indexFromPublic = path.join(projectRoot, 'public/index.html');
   const indexPath = fs.existsSync(indexFromBuild) ? indexFromBuild : indexFromPublic;
   res.sendFile(indexPath);
 });

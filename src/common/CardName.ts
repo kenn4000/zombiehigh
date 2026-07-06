@@ -104,7 +104,7 @@ export enum CardName {
   LEFTOVER_LUNCH_TRAY = 'Leftover Lunch Tray',
   WORN_LIBRARY_CARD = 'Worn Library Card',
   LONG_JUMP = 'Long Jump',
-  LOUDSPEAKER_ANNOUNCEMENT = 'Loudspeaker Announcement',
+  LOUDSPEAKER_ANNOUNCEMENT = 'PA Announcement',
   LUNCH_FROM_HOME = 'Lunch from Home',
   LUNCH_MONEY = 'Lunch Money',
   LUNCH_TRAY = 'Lunch Tray',
@@ -148,7 +148,7 @@ export enum CardName {
   PROTECTION_MONEY = 'Protection Money',
 
   // ── R ─────────────────────────────────────────────────────────────────────
-  RECYCLED_BARRICADE = 'Recycled Barricade Materials',
+  RECYCLED_BARRICADE = 'Scrap Materials',
   RECYCLING_CLUB = 'Recycling Club',
   REGRET = 'Regret',
   RUNNING_JUMP = 'Running Jump',
@@ -159,7 +159,7 @@ export enum CardName {
   SECRET_NOTES = 'Secret Notes',
   SECRET_PASSAGE = 'Secret Passage',
   SELL_A_KIDNEY = 'Sell a Kidney',
-  SELL_OUT = 'Sell Out',
+  SELL_OUT = 'Snitch',
   SENIOR_PRANK = 'Senior Prank',
   SHOP_TEACHERS_PET = "Shop Teacher's Pet",
   SHUT_THAT_DOOR = 'Shut that Door!',
@@ -203,8 +203,8 @@ export enum CardName {
   UNDERGROUND_PASSAGEWAY = 'Underground Passageway',
 
   // ── V ─────────────────────────────────────────────────────────────────────
-  VALEDICTORIANS_NOTEBOOK = "Valedictorian's Notebook",
-  VENDING_MACHINE_SCAPES = 'Vending Machine Scraps',
+  VALEDICTORIANS_NOTEBOOK = 'Trap Blueprints',
+  VENDING_MACHINE_SCAPES = 'Vending Machine',
 
   // ── W ─────────────────────────────────────────────────────────────────────
   LUNCHLADY_HELPER = "Lunchlady's Helper",

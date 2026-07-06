@@ -13,6 +13,7 @@ export type TileModel = {
   q: number;
   r: number;
   tileId: number;
+  dispId: number | null;
   walls: TileWalls;
 };
 

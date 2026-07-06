@@ -12,8 +12,17 @@ import { GameActions } from './GameActions';
 import { LegacyCardProcessor } from './LegacyCardProcessor';
 import { DraftManager, DRAFT_CARD_COST_GOLD } from './DraftManager';
 import { CARDS_DATA } from './data/cardsData';
+import { HEROES_DATA } from './data/heroesData';
+import { LOCKER_DATA } from './data/lockerData';
 import { LegacyCard } from './cards/LegacyCard';
-import { SerializedGame, SerializedPlayer, SerializedCard } from './SerializedGame';
+import {
+  SerializedGame,
+  SerializedPlayer,
+  SerializedCard,
+  SerializedCardPlayEvent,
+  SerializedFinalScore,
+  SerializedPlayerTrackingMetrics,
+} from './SerializedGame';
 import { GameModel, GameSettings } from '../common/models/GameModel';
 import { PlayerModel } from '../common/models/PlayerModel';
 import {
@@ -28,6 +37,8 @@ import { CardName } from '../common/CardName';
 import { CardRegistry } from './cards/CardRegistry';
 import { RequirementEvaluator } from './cards/RequirementEvaluator';
 import { BehaviorExecutor } from './cards/BehaviorExecutor';
+import { AIPlayer } from './ai/AIPlayer';
+import { BoardEvaluator } from './ai/BoardEvaluator';
 import { IGame } from './cards/IGame';
 
 
@@ -142,6 +153,15 @@ export class Game implements IGame {
   // Persistence
   readonly gameLog: string[] = [];
   lastSaveId: number = 0;
+  private readonly cardsPlayedByPlayer: SerializedCardPlayEvent[] = [];
+  private readonly playerActionStatsById: Map<PlayerId, {
+    stepsTaken: number;
+    trapsBuilt: number;
+    barricadesBuilt: number;
+    cardsBoughtByName: Map<string, number>;
+  }> = new Map();
+  private finalScoresByPlayer: SerializedFinalScore[] | undefined = undefined;
+  private completedAtMs: number | undefined = undefined;
 
   constructor(id: GameId, board: Board, players: Player[]) {
     this.id = id;
@@ -234,6 +254,158 @@ export class Game implements IGame {
     this.gameLog.push(msg);
   }
 
+  private recordCardPlay(p: Player, cardName: string, source: 'play' | 'activate'): void {
+    this.cardsPlayedByPlayer.push({
+      playerId: p.id as PlayerId,
+      playerName: p.name,
+      cardName,
+      source,
+      generation: this.generationCount,
+      turnIndex: this.currentTurnIndex,
+      atMs: Date.now(),
+    });
+  }
+
+  private ensurePlayerActionStats(playerId: PlayerId): {
+    stepsTaken: number;
+    trapsBuilt: number;
+    barricadesBuilt: number;
+    cardsBoughtByName: Map<string, number>;
+  } {
+    const existing = this.playerActionStatsById.get(playerId);
+    if (existing) return existing;
+    const created = {
+      stepsTaken: 0,
+      trapsBuilt: 0,
+      barricadesBuilt: 0,
+      cardsBoughtByName: new Map<string, number>(),
+    };
+    this.playerActionStatsById.set(playerId, created);
+    return created;
+  }
+
+  private trackStepTaken(p: Player): void {
+    this.ensurePlayerActionStats(p.id as PlayerId).stepsTaken++;
+  }
+
+  private trackTrapBuilt(p: Player): void {
+    this.ensurePlayerActionStats(p.id as PlayerId).trapsBuilt++;
+  }
+
+  private trackBarricadeBuilt(p: Player): void {
+    this.ensurePlayerActionStats(p.id as PlayerId).barricadesBuilt++;
+  }
+
+  private trackCardBought(p: Player, cardName: string): void {
+    const s = this.ensurePlayerActionStats(p.id as PlayerId);
+    s.cardsBoughtByName.set(cardName, (s.cardsBoughtByName.get(cardName) ?? 0) + 1);
+  }
+
+  private buildPlayerTrackingMetrics(): SerializedPlayerTrackingMetrics[] {
+    const finalById = new Map<string, SerializedFinalScore>();
+    for (const fs of (this.finalScoresByPlayer ?? [])) finalById.set(fs.playerId, fs);
+
+    const playedByPlayer = new Map<string, Map<string, number>>();
+    const activatedByPlayer = new Map<string, Map<string, number>>();
+    for (const evt of this.cardsPlayedByPlayer) {
+      const holder = evt.source === 'play' ? playedByPlayer : activatedByPlayer;
+      const byName = holder.get(evt.playerId) ?? new Map<string, number>();
+      byName.set(evt.cardName, (byName.get(evt.cardName) ?? 0) + 1);
+      holder.set(evt.playerId, byName);
+    }
+
+    return this.players.map(p => {
+      const pid = p.id as PlayerId;
+      const stats = this.ensurePlayerActionStats(pid);
+      const boughtArr = [...stats.cardsBoughtByName.entries()]
+        .map(([cardName, count]) => ({ cardName, count }))
+        .sort((a, b) => b.count - a.count || a.cardName.localeCompare(b.cardName));
+      const playedMap = playedByPlayer.get(pid) ?? new Map<string, number>();
+      const activatedMap = activatedByPlayer.get(pid) ?? new Map<string, number>();
+      const mergedPlayCounts = new Map<string, number>();
+      for (const [name, c] of playedMap) mergedPlayCounts.set(name, (mergedPlayCounts.get(name) ?? 0) + c);
+      for (const [name, c] of activatedMap) mergedPlayCounts.set(name, (mergedPlayCounts.get(name) ?? 0) + c);
+      const playedArr = [...mergedPlayCounts.entries()]
+        .map(([cardName, count]) => ({ cardName, count }))
+        .sort((a, b) => b.count - a.count || a.cardName.localeCompare(b.cardName));
+      const fs = finalById.get(pid);
+
+      return {
+        playerId: pid,
+        playerName: p.name,
+        heroId: p.selectedHero?.id as HeroId | undefined,
+        heroName: p.selectedHero?.name,
+        stepsTaken: stats.stepsTaken,
+        trapsBuilt: stats.trapsBuilt,
+        barricadesBuilt: stats.barricadesBuilt,
+        cardsBought: boughtArr.reduce((s, x) => s + x.count, 0),
+        cardsBoughtByName: boughtArr,
+        cardsPlayed: [...playedMap.values()].reduce((s, x) => s + x, 0),
+        cardsActivated: [...activatedMap.values()].reduce((s, x) => s + x, 0),
+        cardsPlayedByName: playedArr,
+        finalSP: fs?.survivalPoints ?? p.survivalPoints,
+        finalNP: fs?.nicePoints ?? p.nicePoints,
+        finalCP: fs?.coolPoints ?? p.coolPoints,
+        finalScore: fs?.finalScore ?? (p.survivalPoints + Math.max(p.nicePoints, p.coolPoints)),
+        rank: fs?.rank,
+      };
+    });
+  }
+
+  private ensureTrackingFinalized(): void {
+    if (!this.isGameOver() || this.finalScoresByPlayer) return;
+    const sorted = [...this.players]
+      .map(p => ({
+        playerId: p.id as PlayerId,
+        playerName: p.name,
+        survivalPoints: p.survivalPoints,
+        nicePoints: p.nicePoints,
+        coolPoints: p.coolPoints,
+        finalScore: p.survivalPoints + Math.max(p.nicePoints, p.coolPoints),
+        isAlive: p.isAlive,
+      }))
+      .sort((a, b) => b.finalScore - a.finalScore);
+
+    this.finalScoresByPlayer = sorted.map((s, i) => ({ ...s, rank: i + 1 }));
+    this.completedAtMs = Date.now();
+    this.log('Game tracking finalized: final scores recorded.');
+  }
+
+  public getTrackingData(): {
+    gameLog: string[];
+    cardsPlayedByPlayer: SerializedCardPlayEvent[];
+    playerMetricsByPlayer: SerializedPlayerTrackingMetrics[];
+    finalScoresByPlayer?: SerializedFinalScore[];
+    playerSelectionsByPlayer?: Array<{
+      playerId: PlayerId;
+      playerName: string;
+      heroId?: HeroId;
+      heroName?: string;
+      lockerIds: LockerId[];
+      lockerNames: string[];
+    }>;
+    completedAtMs?: number;
+  } {
+    this.ensureTrackingFinalized();
+    const playerSelectionsByPlayer = this.players.map(p => ({
+      playerId: p.id as PlayerId,
+      playerName: p.name,
+      heroId: p.selectedHero?.id as HeroId | undefined,
+      heroName: p.selectedHero?.name,
+      lockerIds: p.selectedLockers.map(r => r.id as LockerId),
+      lockerNames: p.selectedLockers.map(r => r.name),
+    }));
+
+    return {
+      gameLog: [...this.gameLog],
+      cardsPlayedByPlayer: [...this.cardsPlayedByPlayer],
+      playerMetricsByPlayer: this.buildPlayerTrackingMetrics(),
+      finalScoresByPlayer: this.finalScoresByPlayer ? [...this.finalScoresByPlayer] : undefined,
+      playerSelectionsByPlayer,
+      completedAtMs: this.completedAtMs,
+    };
+  }
+
   /** IGame: draw N cards from the deck into the player's hand. */
   drawCards(player: Player, count: number): void {
     if (!player.isAlive) return;
@@ -249,17 +421,16 @@ export class Game implements IGame {
     }
   }
 
-  /** IGame: spawn N zombies at the lowest available board tiles. */
+  /** IGame: spawn N zombies using d20 room routing and lowest open room display-ID tile. */
   spawnZombies(count: number): void {
     let placed = 0;
-    for (const h of this.board.getTilesInIDOrder()) {
-      if (placed >= count) break;
-      if (!this.isPlayerAt(h) && !this.isZombieAt(h) && !this.board.hasTrap(h) && !this.board.hasBait(h)) {
-        this.zombies.push(new Zombie(h));
-        placed++;
-      }
+    let skipped = 0;
+    for (let i = 0; i < count; i++) {
+      if (this.spawnZombieByRoomRoll()) placed++;
+      else skipped++;
     }
     if (placed > 0) this.log(`Spawned ${placed} zombie(s).`);
+    if (skipped > 0) this.log(`${skipped} zombie spawn(s) failed (rolled room had no open spawn tile).`);
   }
 
   // ---- Setup ----
@@ -321,9 +492,42 @@ export class Game implements IGame {
     if (!this._setupPhase) return false;
     const p = this.getPlayerById(playerId);
     if (!p) return false;
+    const requesterIsBot = p.isBot;
+    // Auto-populate AI selections before confirming
+    if (p.isBot) {
+      const aiPlayer = new AIPlayer(p, this);
+      if (!p.selectedHero && p.setupHeroOptions.length > 0) {
+        p.selectedHero = aiPlayer.selectHero(p.setupHeroOptions);
+        if (p.selectedHero.id === HeroId.CARD_SHARK) {
+          p.selectedStartingCards = [...p.setupCardOptions];
+        }
+        this.log(`${p.name} (AI): Selected hero ${p.selectedHero.name}`);
+      }
+      if (p.selectedLockers.length === 0 && p.setupLockerOptions.length > 0) {
+        p.selectedLockers = aiPlayer.selectLockers(p.setupLockerOptions, 2);
+        this.log(`${p.name} (AI): Selected lockers`);
+      }
+      if (p.selectedStartingCards.length === 0 && p.selectedHero?.id !== HeroId.CARD_SHARK && p.setupCardOptions.length > 0) {
+        p.selectedStartingCards = aiPlayer.selectStartingCards(p.setupCardOptions, p.setupCardOptions.length);
+        this.log(`${p.name} (AI): Selected starting cards`);
+      }
+    }
     const ok = this.draftManager.confirmSelection(p);
     if (!ok) return false;
     p.setupConfirmed = true;
+
+    // Human setup confirmation should also advance all bot players so mixed lobbies
+    // (for example 1 human + 2 CPUs) do not get stuck waiting for bot readiness.
+    if (!requesterIsBot) {
+      for (const bot of this.players) {
+        if (!bot.isBot || bot.setupConfirmed) continue;
+        this.confirmSetup(bot.id as PlayerId);
+      }
+      if (this.players.every(pl => pl.setupConfirmed)) {
+        this.tryStartGame();
+      }
+    }
+
     return true;
   }
 
@@ -331,6 +535,10 @@ export class Game implements IGame {
     if (!this._setupPhase) return true;
     const ok = this.draftManager.tryStartGame(this.players);
     if (!ok) return false;
+
+    for (const p of this.players) {
+      for (const c of p.selectedStartingCards) this.trackCardBought(p, c.name);
+    }
 
     // Remove from the game deck any cards already assigned to players' starting hands (prevents duplicates)
     const ownedNames = new Set(this.players.flatMap(p => p.cardsInHand.map(c => c.name)));
@@ -395,11 +603,19 @@ export class Game implements IGame {
     if (alivePlayers.every(pl => pl.isPlaced)) {
       this._placementPhase = false;
       this.currentTurnIndex = 0;
+      // Ensure day-to-day first-player rotation starts on day 2.
+      this.firstPlayerOffset = 1;
       this.log('All players placed! Game begins!');
     } else {
       do {
         this.currentTurnIndex = (this.currentTurnIndex + 1) % this.players.length;
       } while (!this.players[this.currentTurnIndex].isAlive || this.players[this.currentTurnIndex].isPlaced);
+
+      // Trigger AI placement auto-resolution for bot players
+      const currentPlayer = this.getCurrentPlayer();
+      if (currentPlayer.isBot) {
+        setTimeout(() => this.autoResolvePlacement(), 100);
+      }
     }
   }
 
@@ -424,6 +640,7 @@ export class Game implements IGame {
     if (this.pendingFreeBarricadeCount > 0) {
       const bFreeBar = this.snapStats(p);
       if (this.actions.handleFreeBarricade(p, hexA, hexB)) {
+        this.trackBarricadeBuilt(p);
         this.logRichAction(p, 'placed a free barricade', bFreeBar, this.snapStats(p));
         this.pendingFreeBarricadeCount--;
         if (this.pendingFreeBarricadeCount <= 0) {
@@ -448,6 +665,7 @@ export class Game implements IGame {
     const [first, second] = aAdj ? [hexA2, hexB2] : [hexB2, hexA2];
     const bBar = this.snapStats(p);
     if (this.actions.handleBarricade(p, first, second)) {
+      this.trackBarricadeBuilt(p);
       this.logRichAction(p, 'placed a barricade', bBar, this.snapStats(p), this.getAdjustedBarricadeCost(p));
       this.useAction();
       this.currentMode = '';
@@ -586,6 +804,7 @@ export class Game implements IGame {
               }
             }
             p.position = hex;
+            this.trackStepTaken(p);
             this.pendingFreeMoveSteps--;
             // Apply per-step adjacency gold (e.g. Crowded Halls) after each step
             if (this.pendingPostMoveAdjacencyGold?.playerId === playerId) {
@@ -614,6 +833,7 @@ export class Game implements IGame {
         // Paid move
         if (!this.board.hasTrap(hex) && !this.isPlayerAt(hex) && !this.isZombieAt(hex) && !this.board.hasBait(hex)) {
           success = this.actions.handleMove(p, hex);
+          if (success) this.trackStepTaken(p);
         } else {
           this.log('Cannot move there: Tile is occupied or trapped!');
         }
@@ -631,6 +851,7 @@ export class Game implements IGame {
             const bFreeTrap = this.snapStats(p);
             if (p.selectedHero?.id !== HeroId.VON_TRAP) p.addSurvivalPoints(1);
             this.board.placeTrap(hex, new Trap(p.id));
+            this.trackTrapBuilt(p);
             this.pendingFreeTrap = false;
             this.currentMode = '';
             this.logRichAction(p, 'placed a free trap', bFreeTrap, this.snapStats(p));
@@ -642,6 +863,7 @@ export class Game implements IGame {
         }
         {
           const bT = this.snapStats(p); success = this.actions.handleTrap(p, hex);
+          if (success) this.trackTrapBuilt(p);
           if (success) this.logRichAction(p, 'placed a trap', bT, this.snapStats(p), this.getAdjustedTrapCost(p));
         }
         break;
@@ -740,7 +962,7 @@ export class Game implements IGame {
   useAction(): void {
     this.actionsRemaining--;
     // Don't end the turn if the current player still has a pending discard, interaction,
-    // free placement, free moves, or draw-keep selection to resolve
+    // free placement, free moves, draw-keep selection, locker choice, or OR-option to resolve
     if (this.actionsRemaining <= 0
       && !this.getCurrentPlayer()?.pendingDiscardDraw
       && !this.pendingInteraction
@@ -749,7 +971,9 @@ export class Game implements IGame {
       && !this.pendingFreeBait
       && !this.pendingFreeTrap
       && !this.pendingJumpOver
-      && (this.getCurrentPlayer()?.pendingDrawKeepCount ?? 0) <= 0) {
+      && (this.getCurrentPlayer()?.pendingDrawKeepCount ?? 0) <= 0
+      && (this.pendingLockerOptions.get(this.getCurrentPlayer()?.id as PlayerId)?.length ?? 0) <= 0
+      && !this.pendingOrActionChoice.has(this.getCurrentPlayer()?.id as PlayerId)) {
       this.endTurn();
     }
   }
@@ -764,7 +988,9 @@ export class Game implements IGame {
       && !this.pendingFreeBait
       && !this.pendingFreeTrap
       && !this.pendingJumpOver
-      && (this.getCurrentPlayer()?.pendingDrawKeepCount ?? 0) <= 0) {
+      && (this.getCurrentPlayer()?.pendingDrawKeepCount ?? 0) <= 0
+      && (this.pendingLockerOptions.get(this.getCurrentPlayer()?.id as PlayerId)?.length ?? 0) <= 0
+      && !this.pendingOrActionChoice.has(this.getCurrentPlayer()?.id as PlayerId)) {
       this.endTurn();
     }
   }
@@ -774,6 +1000,9 @@ export class Game implements IGame {
     const p = this.getPlayerById(playerId);
     if (!p || p !== this.getCurrentPlayer()) return;
     if (p.pendingDiscardDraw || this.pendingInteraction) return; // must resolve pending effects before passing
+    if ((this.pendingLockerOptions.get(playerId)?.length ?? 0) > 0) return;
+    if ((p.pendingDrawKeepCount ?? 0) > 0) return;
+    if (this.pendingOrActionChoice.has(playerId)) return;
     this.passedPlayerIds.add(playerId);
     this.endTurn();
   }
@@ -783,6 +1012,9 @@ export class Game implements IGame {
     const p = this.getPlayerById(playerId);
     if (!p || p !== this.getCurrentPlayer()) return;
     if (p.pendingDiscardDraw || this.pendingInteraction) return;
+    if ((this.pendingLockerOptions.get(playerId)?.length ?? 0) > 0) return;
+    if ((p.pendingDrawKeepCount ?? 0) > 0) return;
+    if (this.pendingOrActionChoice.has(playerId)) return;
     // Prevent defer when all other alive players have already passed (would cause a stuck state)
     const aliveCount = this.players.filter(pl => pl.isAlive).length;
     if (this.passedPlayerIds.size >= aliveCount - 1) {
@@ -791,6 +1023,132 @@ export class Game implements IGame {
     }
     this.log(`${p.name} defers their remaining action(s) and will go again after other players.`);
     this.endTurn(); // advance WITHOUT adding to passedPlayerIds
+  }
+
+  /**
+   * Auto-resolve AI player turn.
+   * Called when a bot player's turn begins.
+   * This method will recursively resolve the bot's actions until it passes/defers.
+   */
+  public autoResolveAITurn(playerId: PlayerId): void {
+    const p = this.getPlayerById(playerId);
+    if (!p || !p.isBot || p !== this.getCurrentPlayer()) return;
+    if (!p.isAlive || this.isGameOver()) return;
+
+    // Resolve highlighted pending board interactions (e.g. Spatial Swap target selection).
+    if (this.pendingInteraction && this.pendingInteraction.playerId === playerId) {
+      const model = this.toModel(playerId);
+      const firstHexKey = model.board.highlightedHexKeys[0];
+      if (firstHexKey) {
+        this.processAction(playerId, HexCoordinate.fromKey(firstHexKey));
+      }
+      if (p === this.getCurrentPlayer() && !this.isGameOver()) {
+        setTimeout(() => this.autoResolveAITurn(playerId), 100);
+      }
+      return;
+    }
+
+    // Resolve forced discard prompts immediately so card effects like Hidden Report Card
+    // do not deadlock the AI turn loop.
+    if (p.pendingDiscardDraw) {
+      const toDiscard = p.cardsInHand[0];
+      if (toDiscard) {
+        this.discardCardFromPending(playerId, toDiscard.name);
+      } else {
+        // Defensive fallback: clear impossible pending state.
+        p.pendingDiscardDraw = undefined;
+      }
+      if (p === this.getCurrentPlayer() && !this.isGameOver()) {
+        setTimeout(() => this.autoResolveAITurn(playerId), 100);
+      }
+      return;
+    }
+
+    // Create AI decision engine
+    const aiPlayer = new AIPlayer(p, this);
+    // Get next decision
+    const decision = aiPlayer.decideTurnAction();
+
+    // Log AI decision
+    this.log(`${p.name} (AI-${p.difficultyLevel}): ${decision.reason || 'deciding...'}`);
+
+    // Card play decision takes priority when provided.
+    if (decision.cardToPlay) {
+      this.playCard(playerId, decision.cardToPlay.name);
+      if (p === this.getCurrentPlayer() && this.actionsRemaining > 0 && !this.isGameOver()) {
+        setTimeout(() => this.autoResolveAITurn(playerId), 100);
+      }
+      return;
+    }
+
+    // Execute decision
+    switch (decision.actionType) {
+      case 'M':
+        if (decision.targetHex) {
+          this.setMode('M');
+          this.processAction(playerId, decision.targetHex);
+          // Schedule next AI action after a small delay (prevent stack overflow)
+          if (p === this.getCurrentPlayer() && this.actionsRemaining > 0) {
+            setTimeout(() => this.autoResolveAITurn(playerId), 100);
+          }
+        }
+        break;
+      case 'T':
+        if (decision.targetHex) {
+          this.setMode('T');
+          this.processAction(playerId, decision.targetHex);
+          if (p === this.getCurrentPlayer() && this.actionsRemaining > 0 && !this.isGameOver()) {
+            setTimeout(() => this.autoResolveAITurn(playerId), 100);
+          }
+        }
+        break;
+      case 'B':
+        if (decision.targetHex) {
+          this.setMode('B');
+          this.processAction(playerId, decision.targetHex);
+          if (p === this.getCurrentPlayer() && this.actionsRemaining > 0 && !this.isGameOver()) {
+            setTimeout(() => this.autoResolveAITurn(playerId), 100);
+          }
+        }
+        break;
+      case 'W':
+        if (decision.targetHex && decision.secondaryHex) {
+          this.handleEdgePlacement(playerId, decision.targetHex.q, decision.targetHex.r, decision.secondaryHex.q, decision.secondaryHex.r);
+          if (p === this.getCurrentPlayer() && this.actionsRemaining > 0 && !this.isGameOver()) {
+            setTimeout(() => this.autoResolveAITurn(playerId), 100);
+          }
+        } else if (decision.targetHex) {
+          if (this.firstBarricadeHex === undefined) {
+            this.setMode('W');
+            this.firstBarricadeHex = decision.targetHex;
+            if (p === this.getCurrentPlayer() && !this.isGameOver()) {
+              setTimeout(() => this.autoResolveAITurn(playerId), 100);
+            }
+          } else {
+            this.processAction(playerId, decision.targetHex);
+            if (p === this.getCurrentPlayer() && this.actionsRemaining > 0 && !this.isGameOver()) {
+              setTimeout(() => this.autoResolveAITurn(playerId), 100);
+            }
+          }
+        }
+        break;
+      case 'A':
+        if (decision.targetHex) {
+          this.setMode('A');
+          this.processAction(playerId, decision.targetHex);
+          if (p === this.getCurrentPlayer() && this.actionsRemaining > 0 && !this.isGameOver()) {
+            setTimeout(() => this.autoResolveAITurn(playerId), 100);
+          }
+        }
+        break;
+      case 'DEFER':
+        this.deferTurn(playerId);
+        break;
+      case 'PASS':
+      default:
+        this.passTurn(playerId);
+        break;
+    }
   }
 
   private endTurn(): void {
@@ -813,14 +1171,17 @@ export class Game implements IGame {
       this.zombiePhase();
       // Award 1 SP to every surviving player at end of night
       for (const p of this.players) { if (p.isAlive) p.addSurvivalPoints(1); }
-      if (this.playerInEscapeId === undefined && !this.isGameOver()) {
-        // Snapshot scores at end of this night (after zombie phase)
+      // Snapshot scores at end of every night (including the final one) so the full
+      // score history appears in the end-of-game graph.
+      if (this.playerInEscapeId === undefined) {
         this.nightScoreHistory.push(this.players.map(p => ({
           id: p.id,
           name: p.name,
           color: p.color,
           score: p.survivalPoints + Math.max(p.nicePoints, p.coolPoints),
         })));
+      }
+      if (this.playerInEscapeId === undefined && !this.isGameOver()) {
         this.generationCount++;
         const survivors = this.players.filter(p => p.isAlive).length;
         this.log(`<b>Day ${this.generationCount}: ${survivors} survivor${survivors !== 1 ? 's' : ''} remaining.</b>`);
@@ -846,6 +1207,12 @@ export class Game implements IGame {
       do {
         this.currentTurnIndex = (this.currentTurnIndex + 1) % this.players.length;
       } while (!this.getCurrentPlayer().isAlive || this.passedPlayerIds.has(this.getCurrentPlayer().id));
+
+      // Trigger AI auto-resolution if current player is a bot
+      const currentPlayer = this.getCurrentPlayer();
+      if (currentPlayer.isBot) {
+        setTimeout(() => this.autoResolveAITurn(currentPlayer.id), 100);
+      }
     }
   }
 
@@ -1039,6 +1406,25 @@ export class Game implements IGame {
         break;
       }
 
+      case 'place_bait_adjacent_opponent': {
+        if (!player) { this.pendingInteraction = undefined; break; }
+        const valid = this.board.isWithinBounds(hex)
+          && !this.isPlayerAt(hex)
+          && !this.isZombieAt(hex)
+          && !this.board.hasTrap(hex)
+          && !this.board.hasBait(hex)
+          && this.players.some(op => op.isAlive && op.id !== player.id && op.position.distanceTo(hex) === 1);
+        if (!valid) {
+          this.log('Choose an empty tile adjacent to any opponent.');
+          break;
+        }
+        this.board.placeBait(hex, player.id);
+        this.fireOnBaitPlaced(player);
+        this.log(`${pname} placed a bait adjacent to an opponent.`);
+        this.pendingInteraction = undefined;
+        break;
+      }
+
       case 'move_player_step1': {
         // Select a target player (alive, not passed, not the activating player)
         if (!player) { this.pendingInteraction = undefined; break; }
@@ -1069,6 +1455,7 @@ export class Game implements IGame {
           break;
         }
         targetPlayer.position = hex;
+        this.trackStepTaken(targetPlayer);
         player.addCoolPoints(1);
         this.log(`${pname} moved ${targetPlayer.name} to ${hex.key()} (+1 CP).`);
         this.pendingInteraction = undefined;
@@ -1111,12 +1498,12 @@ export class Game implements IGame {
         const healRoom = getTileRoom(player.position.q, player.position.r);
         const healTarget = this.players.find(pl =>
           pl.isAlive && pl.id !== player.id &&
-          pl.hitPoints <= 3 &&
+          pl.hitPoints < 5 &&
           getTileRoom(pl.position.q, pl.position.r) === healRoom &&
           pl.position.equals(hex)
         );
-        if (!healTarget) { this.log('No injured ally in your room there. Select a highlighted tile.'); break; }
-        healTarget.addHealth(1);
+        if (!healTarget) { this.log('No valid opponent in your room there. Select a highlighted tile.'); break; }
+        healTarget.hitPoints = Math.min(5, healTarget.hitPoints + 1);
         player.addNicePoints(1);
         player.addSurvivalPoints(1);
         this.log(`${pname} healed ${healTarget.name} for 1 HP (+1 NP, +1 SP).`);
@@ -1137,9 +1524,9 @@ export class Game implements IGame {
           if (z) { z.setDead(); killCount++; }
         }
         if (killCount > 0) {
-          player.addSurvivalPoints(1);
+          player.addSurvivalPoints(killCount);
           player.addNicePoints(killCount);
-          this.log(`${pname} blew up their trap, killing ${killCount} zombie(s): +1 SP, +${killCount} NP.`);
+          this.log(`${pname} blew up their trap, killing ${killCount} zombie(s): +${killCount} SP, +${killCount} NP.`);
         } else {
           this.log(`${pname} blew up their trap, but no adjacent zombies were killed.`);
         }
@@ -1474,10 +1861,8 @@ export class Game implements IGame {
             this.log(`Trap at ${trapPos.key()} killed a zombie!`);
             const owner = this.getPlayerById(ownerId as PlayerId);
             if (owner) {
-              owner.addNicePoints(1);
-              this.fireOnNPGained(owner);
-              // Cheerleader (Von Trap) earns 3 SP per trap kill; others earn 1 SP
-              const trapSP = owner.selectedHero?.id === HeroId.VON_TRAP ? 3 : 1;
+              // Trap success SP: others get 2, Von Trap gets 3.
+              const trapSP = owner.selectedHero?.id === HeroId.VON_TRAP ? 3 : 2;
               owner.addSurvivalPoints(trapSP);
               this.fireOnPersonalZombieKill(owner);
             }
@@ -1526,6 +1911,15 @@ export class Game implements IGame {
 
     // Step 3: Spawn
     this.spawnZombiesByTileID();
+    // If a player was bitten this night, recalculate their valid escape tiles now that
+    // spawning is done — a freshly spawned zombie could have landed on a previously valid tile.
+    if (this.playerInEscapeId !== undefined) {
+      const escapee = this.getPlayerById(this.playerInEscapeId);
+      if (escapee) this.calculateValidEscapeHexes(escapee);
+      if (escapee?.isBot) {
+        setTimeout(() => this.autoResolveAIEscape(escapee.id), 100);
+      }
+    }
     // Step 4: Income + bait cleanup
     this.incomePhase();
     this.computeAdjacentProximityPoints(); // must be called before bait cleanup
@@ -1564,26 +1958,50 @@ export class Game implements IGame {
     return bestTileID;
   }
 
+  private isOpenSpawnTile(h: HexCoordinate): boolean {
+    return !this.isPlayerAt(h) && !this.isZombieAt(h) && !this.board.hasTrap(h) && !this.board.hasBait(h);
+  }
+
+  private getSpawnRoomByRoll(roll: number): string {
+    if (roll <= 5) return 'gymnasium';
+    if (roll <= 7) return 'lobby';
+    if (roll === 8) return 'restrooms';
+    if (roll === 9) return 'janitors-closet';
+    if (roll <= 11) return 'library';
+    if (roll <= 13) return 'cafeteria';
+    if (roll <= 15) return 'auditorium';
+    if (roll <= 17) return 'principals-office';
+    return 'science-lab';
+  }
+
+  private getLowestOpenRoomSpawnTile(roomId: string): HexCoordinate | undefined {
+    return this.board.getRoomSpawnTiles(roomId).find(h => this.isOpenSpawnTile(h));
+  }
+
+  private spawnZombieByRoomRoll(): boolean {
+    const hasAnyOpenSpawnTile = this.board.getTilesInDispIDOrder().some(h => this.board.getDispID(h) != null && this.isOpenSpawnTile(h));
+    if (!hasAnyOpenSpawnTile) return false;
+
+    // Reroll until we hit a room with an open spawn tile.
+    for (let attempts = 0; attempts < 200; attempts++) {
+      const roll = Math.floor(Math.random() * 20) + 1;
+      const roomId = this.getSpawnRoomByRoll(roll);
+      const spawnTile = this.getLowestOpenRoomSpawnTile(roomId);
+      if (!spawnTile) continue;
+      this.zombies.push(new Zombie(spawnTile));
+      return true;
+    }
+    return false;
+  }
+
   private spawnZombiesByTileID(): void {
     const totalSP = this.players.filter(p => p.isAlive).reduce((s, p) => s + p.survivalPoints, 0);
-    const spawnCount = Math.floor(totalSP / 15);
+    const spawnCount = Math.floor(totalSP / 10);
     if (spawnCount <= 0) return;
-    let placed = 0;
-    // Prefer Gymnasium tiles; fall back to any open tile if the gym is full
-    const gymTiles = this.board.getGymnasiumTiles();
-    const gymKeys = new Set(gymTiles.map(h => h.key()));
-    const orderedCandidates = [
-      ...gymTiles,
-      ...this.board.getTilesInIDOrder().filter(h => !gymKeys.has(h.key())),
-    ];
-    for (const h of orderedCandidates) {
-      if (placed >= spawnCount) break;
-      if (!this.isPlayerAt(h) && !this.isZombieAt(h) && !this.board.hasTrap(h) && !this.board.hasBait(h)) {
-        this.zombies.push(new Zombie(h));
-        placed++;
-      }
-    }
-    if (placed > 0) this.log(`Spawned ${placed} zombie(s) in the Gymnasium (SP/15=${spawnCount}).`);
+    const before = this.zombies.length;
+    this.spawnZombies(spawnCount);
+    const placed = this.zombies.length - before;
+    if (placed > 0) this.log(`Night spawn added ${placed} zombie(s) (SP/10=${spawnCount}).`);
   }
 
   private incomePhase(): void {
@@ -1639,7 +2057,17 @@ export class Game implements IGame {
       const names = this.nightChoiceQueue
         .map(pid => this.getPlayerById(pid)?.name ?? pid).join(', ');
       this.log(`Night rewards pending — ${names} must choose NP or CP.`);
+      this.maybeAutoResolveNightChoice();
     }
+  }
+
+  private maybeAutoResolveNightChoice(): void {
+    const current = this.nightChoiceQueue[0];
+    if (!current) return;
+    const p = this.getPlayerById(current);
+    if (!p?.isBot) return;
+    const choice: 'np' | 'cp' = p.nicePoints >= p.coolPoints ? 'np' : 'cp';
+    setTimeout(() => this.resolveNightChoice(current, choice), 100);
   }
 
   /** Resolve a player's night choice: all accumulated points become either NP or CP. */
@@ -1664,6 +2092,8 @@ export class Game implements IGame {
     this.nightChoiceQueue.shift();
     if (this.nightChoiceQueue.length === 0) {
       this.startDraftingPhase();
+    } else {
+      this.maybeAutoResolveNightChoice();
     }
   }
 
@@ -1775,15 +2205,42 @@ export class Game implements IGame {
     const aliveCount = this.players.filter(p => p.isAlive).length;
     if (this.passedPlayerIds.size >= aliveCount) {
       // The zombie phase already ran (with spawn + income) before escape was triggered.
-      // Do NOT re-run zombiePhase — just advance to the next generation / drafting.
+      // Do NOT re-run zombiePhase — just advance to the next generation flow.
       this.generationCount++;
       this.passedPlayerIds.clear();
       this.currentTurnIndex = 0;
       this.actionsRemaining = 3;
       for (const p of this.players) p.usedActions = [];
-      this.startDraftingPhase();
+      this.buildNightChoiceQueue();
+      if (this.nightChoiceQueue.length === 0) {
+        this.startDraftingPhase();
+      }
     }
     // If not all players had passed (rare mid-generation escape), normal turn flow resumes.
+  }
+
+  private autoResolveAIEscape(playerId: PlayerId): void {
+    if (this.playerInEscapeId !== playerId || this.getPhase() !== Phase.ESCAPE) return;
+    const p = this.getPlayerById(playerId);
+    if (!p || !p.isBot) return;
+
+    if (this.validEscapeHexes.length === 0) {
+      this.log(`${p.name} has no valid escape tiles.`);
+      this.clearEscapeState();
+      return;
+    }
+
+    const pick = [...this.validEscapeHexes].sort((a, b) => this.board.getTileID(a) - this.board.getTileID(b))[0];
+    if (!pick) {
+      this.clearEscapeState();
+      return;
+    }
+
+    if (this.actions.handleEscape(p, pick)) {
+      this.checkLastSurvivorAndCleanup();
+      if (p.isAlive) this.log(`${p.name} escaped to safety.`);
+      this.clearEscapeState();
+    }
   }
 
   // ---- Drafting phase ----
@@ -1818,9 +2275,29 @@ export class Game implements IGame {
     if (!this._draftingPhase) return;
     const p = this.getPlayerById(playerId);
     if (!p) return;
+    const requesterIsBot = p.isBot;
 
     const costPerCard = this.getAdjustedDraftCostPerCard(p);
     const paidCount = this.settings.firstCardFreeNightDraft ? Math.max(0, p.selectedDraftCards.length - 1) : p.selectedDraftCards.length;
+    // Auto-select draft cards for AI players (0..4 cards based on positive net value).
+    if (p.isBot && p.temporaryHand.length > 0 && p.selectedDraftCards.length === 0) {
+      const aiPlayer = new AIPlayer(p, this);
+      const maxAffordableCards = Math.min(
+        p.temporaryHand.length,
+        Math.floor(p.gold / Math.max(1, costPerCard)) + (this.settings.firstCardFreeNightDraft ? 1 : 0),
+      );
+      p.selectedDraftCards = aiPlayer.selectDraftCards(
+        p.temporaryHand,
+        maxAffordableCards,
+        costPerCard,
+        this.settings.firstCardFreeNightDraft,
+      );
+      if (p.selectedDraftCards.length > 0) {
+        this.log(`${p.name} (AI): Drafted ${p.selectedDraftCards.length} card(s): ${p.selectedDraftCards.map(c => c.name).join(', ')}`);
+      } else {
+        this.log(`${p.name} (AI): Skipped draft (no positive-value card buys).`);
+      }
+    }
     const totalCost = paidCount * costPerCard;
     if (p.gold < totalCost) {
       this.log('Not enough gold to purchase selected cards!');
@@ -1829,8 +2306,17 @@ export class Game implements IGame {
 
     p.spendGold(totalCost);
     p.cardsInHand.push(...p.selectedDraftCards);
+    for (const c of p.selectedDraftCards) this.trackCardBought(p, c.name);
     p.temporaryHand = [];
     p.selectedDraftCards = [];
+
+    if (!requesterIsBot) {
+      for (const bot of this.players) {
+        if (!bot.isBot || !bot.isAlive || bot.temporaryHand.length === 0) continue;
+        this.confirmDraftSelection(bot.id as PlayerId);
+      }
+    }
+
     this.checkDraftingComplete();
   }
 
@@ -1854,8 +2340,13 @@ export class Game implements IGame {
   private finishGeneration(): void {
     this.log(`Draft complete. Night ${this.generationCount} begins.`);
     this.passedPlayerIds.clear();
-    this.currentTurnIndex = 0;
     this.actionsRemaining = 3;
+    // currentTurnIndex was already set to an alive player by endTurn(); do NOT reset to 0
+    // or a dead player (index 0) could be given the first turn of the new night.
+    const currentPlayer = this.getCurrentPlayer();
+    if (currentPlayer?.isBot && !this.isGameOver()) {
+      setTimeout(() => this.autoResolveAITurn(currentPlayer.id), 100);
+    }
   }
 
   // ---- Card play ----
@@ -1928,6 +2419,10 @@ export class Game implements IGame {
       // Phase 5 typed path: requirement check, cost deduction, bonus, behavior execution
       const ctx = { board: this.board, players: this.players, zombies: this.zombies };
       if (!RequirementEvaluator.meets(p, icard.requirements, ctx)) return;
+      if (!this.hasDiscardPreconditionMet(p, icard.behavior)) {
+        this.log(`${p.name}: Cannot play "${cardName}" without enough cards to discard.`);
+        return;
+      }
       const adjustedCost = this.getAdjustedCardCost(p, card);
       if (p.gold < adjustedCost) {
         this.log(`${p.name}: Not enough gold to play "${cardName}" (need ${adjustedCost}, have ${p.gold}).`);
@@ -1958,6 +2453,7 @@ export class Game implements IGame {
       }
       const after = this.snapStats(p);
       this.logRichCardPlay(p, card.name, adjustedCost, before, after);
+      this.recordCardPlay(p, card.name, 'play');
       this.useAction();
     } else {
       // Legacy fallback for cards not yet in the typed registry
@@ -1965,6 +2461,7 @@ export class Game implements IGame {
       if (this.cardProcessor.playCard(p, card, (msg) => this.log(msg))) {
         const after = this.snapStats(p);
         this.logRichCardPlay(p, card.name, card.playCost, before, after);
+        this.recordCardPlay(p, card.name, 'play');
         this.useAction();
       }
     }
@@ -2200,7 +2697,7 @@ export class Game implements IGame {
     if (icard) {
       const isRepeatable = icard.behavior?.repeatable === true;
       if (!isStartingAction && !isRepeatable && p.usedActions.some(c => c === card)) return; // already used this night
-      if (!isStartingAction && this.actionsRemaining <= 0) {
+      if (this.actionsRemaining <= 0) {
         this.log(`${p.name}: No actions remaining this turn.`);
         return;
       }
@@ -2209,12 +2706,18 @@ export class Game implements IGame {
       BehaviorExecutor.execute(icard.behavior, p, this, card.name);
       const after = this.snapStats(p);
       this.logRichCardPlay(p, card.name, 0, before, after, 'used action of');
-      if (!isStartingAction) this.useAction();
+      this.recordCardPlay(p, card.name, 'activate');
+      this.useAction();
     } else {
       // Legacy fallback for hero/relic action cards not registered in CardRegistry
+      const usedBefore = p.usedActions.length;
+      const activeBefore = p.activeActions.length;
       this.activateLegacyHeroAction(p, card, isStartingAction);
-      // Consume an action if the legacy handler actually executed (card is now in usedActions)
-      if (!isStartingAction && p.usedActions.includes(card)) this.useAction();
+      if (p.usedActions.length > usedBefore || p.activeActions.length < activeBefore) {
+        this.recordCardPlay(p, card.name, 'activate');
+      }
+      // Consume an action if the legacy handler actually executed
+      if (p.usedActions.includes(card) || (isStartingAction && p.activeActions.length < activeBefore)) this.useAction();
     }
 
     // If this was one of a paired [N]/[C] action, also mark the sibling as used
@@ -2236,32 +2739,11 @@ export class Game implements IGame {
       }
     };
     const name = card.name;
+    const isNAction = name.endsWith(' [N]');
+    const isCAction = name.endsWith(' [C]');
+    const heroId = p.selectedHero?.id;
 
-    // ---- Explicit per-hero dispatch (no text parsing) ----
-    if (name === 'School Nurse [N]') { this.heroNurseN(p, consume, name); return; }
-    if (name === 'School Nurse [C]') { this.heroNurseC(p, consume); return; }
-    if (name === 'Barry Cade [N]') { this.heroBarryN(p, consume, name); return; }
-    if (name === 'Barry Cade [C]') { this.heroBarryC(p, consume, name); return; }
-    if (name === 'Von Trap [N]') { this.heroVonTrapN(p, consume, name); return; }
-    if (name === 'Von Trap [C]') { this.heroVonTrapC(p, consume, name); return; }
-    if (name === 'Bloodthirster [N]') { this.heroBloodthirsterN(p, consume); return; }
-    if (name === 'Bloodthirster [C]') { this.heroBloodthirsterC(p, consume); return; }
-    if (name === 'Spotter [N]') { this.heroSpotterN(p, consume); return; }
-    if (name === 'Spotter [C]') { this.heroSpotterC(p, consume, name); return; }
-    if (name === 'Bungler [N]') { this.heroBunglerN(p, consume); return; }
-    if (name === 'Bungler [C]') { this.heroBunglerC(p, consume, name); return; }
-    if (name === 'Archy Tect [N]') { this.heroArchyTectN(p, consume); return; }
-    if (name === 'Archy Tect [C]') { this.heroArchyTectC(p, consume, name); return; }
-    if (name === 'Loan Wolf [N]') { this.heroLoanWolfN(p, consume); return; }
-    if (name === 'Loan Wolf [C]') { this.heroLoanWolfC(p, consume, name); return; }
-    if (name === 'Richard [N]') { this.heroRichardN(p, consume); return; }
-    if (name === 'Richard [C]') { this.heroRichardC(p, consume); return; }
-    if (name === 'Card Shark [N]') { this.heroCardSharkN(p, consume); return; }
-    if (name === 'Card Shark [C]') { this.heroCardSharkC(p, consume); return; }
-    if (name === 'Gym Coach [N]') { this.heroGymCoachN(p, consume, name); return; }
-    if (name === 'Gym Coach [C]') { this.heroGymCoachC(p, consume, name); return; }
-
-    // ---- Locker action dispatch ----
+    // ---- Locker action dispatch (must run before hero [N]/[C] dispatch) ----
     if (name === 'Dog Tags (Starting Action)') { this.lockerDogTagsSpawn(p, consume); return; }
     if (name === 'Scout Training (Starting Action)') { this.lockerScoutTrainingTrap(p, consume); return; }
     if (name === 'Shoes [N]') { this.lockerShoesN(p, consume); return; }
@@ -2275,6 +2757,32 @@ export class Game implements IGame {
     if (name === 'Ouji Board [C]') { this.lockerOujiBoardC(p, consume); return; }
     if (name === 'Free Hugs T-Shirt [N]') { this.lockerFreeHugsN(p, consume); return; }
     if (name === 'Free Hugs T-Shirt [C]') { this.lockerFreeHugsC(p, consume); return; }
+
+    // ---- Explicit per-hero dispatch by hero id (supports renamed hero labels) ----
+    if (heroId === HeroId.SCHOOL_NURSE && isNAction) { this.heroNurseN(p, consume, name); return; }
+    if (heroId === HeroId.SCHOOL_NURSE && isCAction) { this.heroNurseC(p, consume); return; }
+    if (heroId === HeroId.SCHADENFREUDE && isNAction) { this.heroSchadenfreudeN(p, consume); return; }
+    if (heroId === HeroId.SCHADENFREUDE && isCAction) { this.heroSchadenfreudeC(p, consume); return; }
+    if (heroId === HeroId.BARRY_CADE && isNAction) { this.heroBarryN(p, consume, name); return; }
+    if (heroId === HeroId.BARRY_CADE && isCAction) { this.heroBarryC(p, consume, name); return; }
+    if (heroId === HeroId.VON_TRAP && isNAction) { this.heroVonTrapN(p, consume, name); return; }
+    if (heroId === HeroId.VON_TRAP && isCAction) { this.heroVonTrapC(p, consume, name); return; }
+    if (heroId === HeroId.BLOODTHIRSTER && isNAction) { this.heroBloodthirsterN(p, consume); return; }
+    if (heroId === HeroId.BLOODTHIRSTER && isCAction) { this.heroBloodthirsterC(p, consume); return; }
+    if (heroId === HeroId.SPOTTER && isNAction) { this.heroSpotterN(p, consume); return; }
+    if (heroId === HeroId.SPOTTER && isCAction) { this.heroSpotterC(p, consume, name); return; }
+    if (heroId === HeroId.BUNGLER && isNAction) { this.heroBunglerN(p, consume); return; }
+    if (heroId === HeroId.BUNGLER && isCAction) { this.heroBunglerC(p, consume, name); return; }
+    if (heroId === HeroId.ARCHY_TECT && isNAction) { this.heroArchyTectN(p, consume); return; }
+    if (heroId === HeroId.ARCHY_TECT && isCAction) { this.heroArchyTectC(p, consume, name); return; }
+    if (heroId === HeroId.LOAN_WOLF && isNAction) { this.heroLoanWolfN(p, consume); return; }
+    if (heroId === HeroId.LOAN_WOLF && isCAction) { this.heroLoanWolfC(p, consume, name); return; }
+    if (heroId === HeroId.RICHARD && isNAction) { this.heroRichardN(p, consume); return; }
+    if (heroId === HeroId.RICHARD && isCAction) { this.heroRichardC(p, consume); return; }
+    if (heroId === HeroId.CARD_SHARK && isNAction) { this.heroCardSharkN(p, consume); return; }
+    if (heroId === HeroId.CARD_SHARK && isCAction) { this.heroCardSharkC(p, consume); return; }
+    if (heroId === HeroId.GYM_COACH && isNAction) { this.heroGymCoachN(p, consume, name); return; }
+    if (heroId === HeroId.GYM_COACH && isCAction) { this.heroGymCoachC(p, consume, name); return; }
 
     // ---- Legacy fallback (starting actions + locker actions still text-parsed) ----
     const eff = card.effect.replace(/^action:\s*/i, '').toLowerCase();
@@ -2322,23 +2830,44 @@ export class Game implements IGame {
   private heroNurseN(p: Player, consume: () => void, cardName: string): void {
     const playerRoom = getTileRoom(p.position.q, p.position.r);
     const healTargets = this.players.filter(pl =>
-      pl.isAlive && pl.id !== p.id && pl.hitPoints <= 3 &&
+      pl.isAlive && pl.id !== p.id && pl.hitPoints < 5 &&
       getTileRoom(pl.position.q, pl.position.r) === playerRoom
     );
     if (healTargets.length === 0) {
-      this.log(`${p.name}: No injured players (≤3 HP) in your room to heal.`); return;
+      this.log(`${p.name}: No opponents in your room that can be healed.`); return;
     }
     consume();
     this.startPendingInteraction('heal_player_in_room', p.id, cardName);
   }
 
+  private heroSchadenfreudeN(p: Player, consume: () => void): void {
+    if (p.survivalPoints < 1) { this.log(`${p.name}: Not enough SP (needs 1).`); return; }
+    consume();
+    p.survivalPoints -= 1;
+    p.addNicePoints(3);
+    this.fireOnNPGained(p);
+    this.log(`${p.name}: -1 SP, +3 NP.`);
+  }
+
+  private heroSchadenfreudeC(p: Player, consume: () => void): void {
+    if (p.gold < 2) { this.log(`${p.name}: Not enough gold (needs 2).`); return; }
+    const hasValidTile = this.board.getAllHexes().some(h =>
+      !this.isPlayerAt(h) && !this.isZombieAt(h) && !this.board.hasTrap(h) && !this.board.hasBait(h) &&
+      this.players.some(op => op.isAlive && op.id !== p.id && op.position.distanceTo(h) === 1)
+    );
+    if (!hasValidTile) {
+      this.log(`${p.name}: No empty tile adjacent to an opponent for bait placement.`); return;
+    }
+    consume();
+    p.spendGold(2);
+    p.addCoolPoints(1);
+    this.fireOnCPGained(p);
+    this.startPendingInteraction('place_bait_adjacent_opponent', p.id, 'Phil T. Rags [C]');
+  }
+
   private heroNurseC(p: Player, consume: () => void): void {
     const playerRoom = getTileRoom(p.position.q, p.position.r);
-    const roomTile = this.board.getTilesInIDOrder().find(h =>
-      getTileRoom(h.q, h.r) === playerRoom &&
-      !this.isPlayerAt(h) && !this.isZombieAt(h) &&
-      !this.board.hasTrap(h) && !this.board.hasBait(h)
-    );
+    const roomTile = this.getLowestOpenRoomSpawnTile(playerRoom);
     if (!roomTile) {
       this.log(`${p.name}: No open tile in the ${playerRoom.replace(/-/g, ' ')} to spawn a zombie.`); return;
     }
@@ -2393,20 +2922,16 @@ export class Game implements IGame {
   }
 
   private heroBloodthirsterC(p: Player, consume: () => void): void {
-    const playerRoom = getTileRoom(p.position.q, p.position.r);
-    const roomTile = this.board.getTilesInIDOrder().find(h =>
-      getTileRoom(h.q, h.r) === playerRoom &&
-      !this.isPlayerAt(h) && !this.isZombieAt(h) &&
-      !this.board.hasTrap(h) && !this.board.hasBait(h)
-    );
-    if (!roomTile) { this.log(`${p.name}: No open tile in your room to spawn a zombie.`); return; }
+    if (!this.board.getTilesInDispIDOrder().some(h => this.board.getDispID(h) != null && this.isOpenSpawnTile(h))) {
+      this.log(`${p.name}: No open tile to spawn a zombie.`); return;
+    }
     consume();
-    this.zombies.push(new Zombie(roomTile));
+    this.spawnZombieByRoomRoll();
     p.addGold(3);
     p.addCoolPoints(1);
     this.fireOnCPGained(p);
     this.drawCards(p, 1);
-    this.log(`${p.name} spawned a zombie in the ${playerRoom.replace(/-/g, ' ')}. +3 gold, +1 CP, drew 1 card.`);
+    this.log(`${p.name} spawned a zombie (room roll). +3 gold, +1 CP, drew 1 card.`);
   }
 
   private heroSpotterN(p: Player, consume: () => void): void {
@@ -2518,20 +3043,16 @@ export class Game implements IGame {
 
   private heroRichardC(p: Player, consume: () => void): void {
     if (p.gold < 4) { this.log(`${p.name}: Not enough gold (needs 4).`); return; }
-    const playerRoom = getTileRoom(p.position.q, p.position.r);
-    const roomTile = this.board.getTilesInIDOrder().find(h =>
-      getTileRoom(h.q, h.r) === playerRoom &&
-      !this.isPlayerAt(h) && !this.isZombieAt(h) &&
-      !this.board.hasTrap(h) && !this.board.hasBait(h)
-    );
-    if (!roomTile) { this.log(`${p.name}: No open tile in your room.`); return; }
+    if (!this.board.getTilesInDispIDOrder().some(h => this.board.getDispID(h) != null && this.isOpenSpawnTile(h))) {
+      this.log(`${p.name}: No open tile to spawn a zombie.`); return;
+    }
     consume();
     p.spendGold(4);
     p.goldProduction += 1;
     p.addCoolPoints(1);
     this.fireOnCPGained(p);
-    this.zombies.push(new Zombie(roomTile));
-    this.log(`${p.name} paid 4 gold: +1 GP, +1 CP, spawned zombie in ${playerRoom.replace(/-/g, ' ')}.`);
+    this.spawnZombieByRoomRoll();
+    this.log(`${p.name} paid 4 gold: +1 GP, +1 CP, spawned zombie (room roll).`);
   }
 
   private heroCardSharkN(p: Player, consume: () => void): void {
@@ -2612,13 +3133,15 @@ export class Game implements IGame {
   // ---- Locker Action Implementations ----
 
   private lockerDogTagsSpawn(p: Player, consume: () => void): void {
-    const spawnTile = this.board.getTilesInIDOrder().find(h =>
-      !this.isPlayerAt(h) && !this.isZombieAt(h)
-    );
-    if (!spawnTile) { this.log(`${p.name}: Dog Tags – no open tile to spawn a zombie.`); return; }
+    if (!this.board.getTilesInDispIDOrder().some(h => this.board.getDispID(h) != null && this.isOpenSpawnTile(h))) {
+      this.log(`${p.name}: Dog Tags – no open tile to spawn a zombie.`); return;
+    }
     consume();
-    this.zombies.push(new Zombie(spawnTile));
-    this.log(`${p.name}: Dog Tags – spawned a zombie at ${spawnTile.key()}.`);
+    if (this.spawnZombieByRoomRoll()) {
+      this.log(`${p.name}: Dog Tags – spawned a zombie.`);
+    } else {
+      this.log(`${p.name}: Dog Tags – spawn roll selected a full room (no zombie placed).`);
+    }
   }
 
   private lockerScoutTrainingTrap(p: Player, consume: () => void): void {
@@ -2745,7 +3268,7 @@ export class Game implements IGame {
     this.log(`${p.name}: Free Hugs – +${gained} CP (${gained} adjacent zombie(s)).`);
   }
 
-  /** Fire Goth (Schadenfreude) passive when a structure is destroyed at the given hex/edge key. */
+  /** Fire Janitor passive when a structure is destroyed in the same room. */
   private fireOnStructureDestroyedAt(hexKeyOrEdgeKey: string, ownerId?: string): void {
     let room: string;
     if (hexKeyOrEdgeKey.includes('|')) {
@@ -2759,9 +3282,8 @@ export class Game implements IGame {
       if (!pl.isAlive) continue;
       if (pl.selectedHero?.id !== HeroId.SCHADENFREUDE) continue;
       if (getTileRoom(pl.position.q, pl.position.r) !== room) continue;
-      pl.addGold(2);
-      this.accumulateNight(pl.id, 1);
-      this.log(`${pl.name}: structure destroyed in same room — +2 gold (night: choose NP or CP).`);
+      pl.addGold(3);
+      this.log(`${pl.name}: structure destroyed in same room — +3 gold.`);
     }
     // Child's Tool Set: owner draws 1 card when their own barricade is destroyed
     if (ownerId && hexKeyOrEdgeKey.includes('|')) {
@@ -2810,7 +3332,8 @@ export class Game implements IGame {
       trap_relocate_step1: 'Select one of your traps to relocate.',
       spatial_swap: 'Select an adjacent player or zombie to swap positions with.',
       heal_player: 'Select a highlighted ally within 2 hexes to heal for 1 HP.',
-      heal_player_in_room: 'Select an injured ally (≤3 HP) in your room to heal (+1 NP, +1 SP).',
+      heal_player_in_room: 'Select an opponent in your room to heal by 1 HP (+1 NP, +1 SP).',
+      place_bait_adjacent_opponent: 'Select an empty tile adjacent to any opponent to place bait.',
       heal_player_in_room_simple: 'Select a highlighted ally in your room to heal for 1 HP.',
       move_player_step1: 'Select a highlighted active player to move.',
       move_player_step2: 'Select a highlighted empty tile to move the chosen player to.',
@@ -2924,6 +3447,12 @@ export class Game implements IGame {
     this.draftManager.consumeLocker(chosen.id);
     this.draftManager.applyLockerToPlayer(player, chosen);
     this.log(`${player.name} equipped locker item: ${chosen.name}!`);
+    // Advance the turn now that the player's locker choice is resolved
+    this.maybeEndTurn();
+  }
+
+  hasPendingLockerChoice(playerId: PlayerId): boolean {
+    return (this.pendingLockerOptions.get(playerId)?.length ?? 0) > 0;
   }
 
   /** Resolve a generic or_options choice during the action phase. */
@@ -2937,6 +3466,8 @@ export class Game implements IGame {
       if (eff == null) return;
       this.pendingOrActionChoice.delete(playerId);
       this.applyOrActionEffect(p, eff);
+      // Advance the turn now that the OR-option choice is resolved
+      this.maybeEndTurn();
       return;
     }
     const options = this.pendingLockerOptions.get(playerId);
@@ -3177,6 +3708,9 @@ export class Game implements IGame {
       if (icard?.behavior?.passive?.barricadeLimitBonus != null)
         limit += icard.behavior.passive.barricadeLimitBonus;
     }
+    // Archy Tect passive: all players barricade limit +1.
+    const hasGlobalArchy = this.players.some(pl => pl.isAlive && pl.selectedHero?.id === HeroId.ARCHY_TECT);
+    if (hasGlobalArchy) limit += 1;
     return limit;
   }
 
@@ -3206,6 +3740,11 @@ export class Game implements IGame {
           rate += icard.behavior.passive.allTrapEffectiveness;
       }
     }
+    // Bungler passive: all opponents trap success rates -1 (min 1).
+    for (const pl of this.players) {
+      if (!pl.isAlive || pl.id === owner.id) continue;
+      if (this.hasBunglerDebuff(pl)) rate -= 1;
+    }
     return Math.max(1, Math.min(5, rate));
   }
 
@@ -3224,6 +3763,11 @@ export class Game implements IGame {
         if (icard?.behavior?.passive?.opponentBarricadeEffectiveness != null)
           rate += icard.behavior.passive.opponentBarricadeEffectiveness;
       }
+    }
+    // Bungler passive: all opponents barricade success rates -1 (min 1).
+    for (const pl of this.players) {
+      if (!pl.isAlive || pl.id === barricadeOwner.id) continue;
+      if (this.hasBunglerDebuff(pl)) rate -= 1;
     }
     // allBarricadeEffectiveness applies globally (e.g. Barry Cade)
     for (const pl of this.players) {
@@ -3263,7 +3807,17 @@ export class Game implements IGame {
           rate += icard.behavior.passive.allMeleeEffectiveness;
       }
     }
+    // Bungler passive: all opponents melee success rates -1 (min 1).
+    for (const pl of this.players) {
+      if (!pl.isAlive || pl.id === p.id) continue;
+      if (this.hasBunglerDebuff(pl)) rate -= 1;
+    }
     return Math.max(1, Math.min(5, rate));
+  }
+
+  private hasBunglerDebuff(p: Player): boolean {
+    return p.selectedHero?.id === HeroId.BUNGLER
+      || p.activePassives.some(ap => ap.name === CardName.HERO_BUNGLER_PASSIVE);
   }
 
   private getAdjustedBaitRangeForOwner(ownerId: string): number {
@@ -3426,6 +3980,10 @@ export class Game implements IGame {
     this.pendingNightPoints.clear();
     this.nightChoiceQueue = [];
     this.validEscapeHexes = [];
+    this.cardsPlayedByPlayer.length = 0;
+    this.playerActionStatsById.clear();
+    this.finalScoresByPlayer = undefined;
+    this.completedAtMs = undefined;
     this.board.reset();
     for (const p of this.players) p.reset();
     this.draftManager.loadAllFromResources();
@@ -3436,6 +3994,7 @@ export class Game implements IGame {
   // ---- Serialization ----
 
   serialize(): SerializedGame {
+    this.ensureTrackingFinalized();
     return {
       id: this.id,
       phase: this.getPhase(),
@@ -3472,6 +4031,13 @@ export class Game implements IGame {
         .map(z => ({ id: z.id, q: z.position.q, r: z.position.r })),
       deck: this.deck.map(c => this.serializeCard(c)),
       gameLog: [...this.gameLog],
+      tracking: {
+        gameLog: [...this.gameLog],
+        cardsPlayedByPlayer: [...this.cardsPlayedByPlayer],
+        playerMetricsByPlayer: this.buildPlayerTrackingMetrics(),
+        finalScoresByPlayer: this.finalScoresByPlayer ? [...this.finalScoresByPlayer] : undefined,
+        completedAtMs: this.completedAtMs,
+      },
       createdAtMs: this.createdAtMs,
       lastSaveId: this.lastSaveId,
       settings: { ...this.settings },
@@ -3589,6 +4155,12 @@ export class Game implements IGame {
       p.setupConfirmed = sp.setupConfirmed;
       p.isPlaced = sp.isPlaced ?? true;
       p.isLastSurvivor = sp.isLastSurvivor ?? false;
+      p.selectedHero = sp.selectedHeroId
+        ? HEROES_DATA.find(h => h.id === sp.selectedHeroId)
+        : undefined;
+      p.selectedLockers = (sp.selectedLockerIds ?? [])
+        .map(id => LOCKER_DATA.find(r => r.id === id))
+        .filter((r): r is import('./DraftData').LockerData => r != null);
       // Hero/locker option lists require full HeroData/LockerData objects;
       // not recoverable from IDs alone without the original pool. Left empty post-load.
       p.setupHeroOptions = [];
@@ -3626,6 +4198,17 @@ export class Game implements IGame {
     // Restore log
     game.gameLog.length = 0;
     game.gameLog.push(...data.gameLog);
+
+    // Restore tracking (supports older saves where tracking is absent)
+    game.cardsPlayedByPlayer.length = 0;
+    if (data.tracking?.cardsPlayedByPlayer) {
+      game.cardsPlayedByPlayer.push(...data.tracking.cardsPlayedByPlayer);
+    }
+    game.finalScoresByPlayer = data.tracking?.finalScoresByPlayer
+      ? [...data.tracking.finalScoresByPlayer]
+      : undefined;
+    game.completedAtMs = data.tracking?.completedAtMs;
+    game.ensureTrackingFinalized();
 
     // Restore escape hexes
     if (data.playerInEscapeId) {
@@ -3667,7 +4250,7 @@ export class Game implements IGame {
       if (icard) {
         const ctx = { board: this.board, players: this.players, zombies: this.zombies };
         requirementsMet = RequirementEvaluator.meets(owner, icard.requirements, ctx);
-        isPlayable = requirementsMet && owner.gold >= adjustedCost;
+        isPlayable = requirementsMet && owner.gold >= adjustedCost && this.hasDiscardPreconditionMet(owner, icard.behavior);
         // Spatial Swap: must have an adjacent player or zombie to swap with
         if (card.name === CardName.SPATIAL_SWAP) {
           const nbrs = this.board.getNeighbors(owner.position);
@@ -3684,17 +4267,20 @@ export class Game implements IGame {
       } else {
         requirementsMet = this.cardProcessor.meetsRequirement(owner, card);
         isPlayable = requirementsMet && owner.gold >= (adjustedCost > 0 ? adjustedCost : card.playCost);
-        // School Nurse [N]: unplayable when no injured ally (≤3 HP) is in the same room
-        if (card.name === 'School Nurse [N]') {
+        const ownerHeroId = owner.selectedHero?.id;
+        const isNAction = card.name.endsWith(' [N]');
+        const isCAction = card.name.endsWith(' [C]');
+        // School Nurse [N]: requires a valid heal target in room
+        if (ownerHeroId === HeroId.SCHOOL_NURSE && isNAction) {
           const ownerRoom = getTileRoom(owner.position.q, owner.position.r);
           const hasTarget = this.players.some(pl =>
-            pl.isAlive && pl.id !== owner.id && pl.hitPoints <= 3 &&
+            pl.isAlive && pl.id !== owner.id && pl.hitPoints < 5 &&
             getTileRoom(pl.position.q, pl.position.r) === ownerRoom
           );
           if (!hasTarget) { isPlayable = false; requirementsMet = false; }
         }
         // Gym Coach [N]: must be in gymnasium with at least one zombie there
-        if (card.name === 'Gym Coach [N]') {
+        if (ownerHeroId === HeroId.GYM_COACH && isNAction) {
           const coachRoom = getTileRoom(owner.position.q, owner.position.r);
           if (coachRoom !== 'gymnasium') { isPlayable = false; requirementsMet = false; }
           else {
@@ -3703,19 +4289,27 @@ export class Game implements IGame {
           }
         }
         // Gym Coach [C]: must have an adjacent opponent barricade or trap
-        if (card.name === 'Gym Coach [C]') {
+        if (ownerHeroId === HeroId.GYM_COACH && isCAction) {
           if (!this.hasAdjacentOpponentStructure(owner)) { isPlayable = false; requirementsMet = false; }
         }
         // Bloodthirster [N]: unplayable when no adjacent zombie
-        if (card.name === 'Bloodthirster [N]') {
+        if (ownerHeroId === HeroId.BLOODTHIRSTER && isNAction) {
           const nbrs = this.board.getNeighbors(owner.position);
           const hasAdjZombie = this.zombies.some(z => z.isAlive && nbrs.some(n => n.equals(z.position)));
           if (!hasAdjZombie) { isPlayable = false; requirementsMet = false; }
         }
         // Von Trap [N]/[C]: unplayable when no own traps are on the board
-        if (card.name === 'Von Trap [N]' || card.name === 'Von Trap [C]') {
+        if (ownerHeroId === HeroId.VON_TRAP && (isNAction || isCAction)) {
           const hasOwnTraps = [...this.board.getTraps().values()].some(t => t.ownerId === owner.id);
           if (!hasOwnTraps) { isPlayable = false; requirementsMet = false; }
+        }
+        // Janitor [C]: requires 2 gold and an empty tile adjacent to any opponent.
+        if (ownerHeroId === HeroId.SCHADENFREUDE && isCAction) {
+          const hasValidTile = this.board.getAllHexes().some(h =>
+            !this.isPlayerAt(h) && !this.isZombieAt(h) && !this.board.hasTrap(h) && !this.board.hasBait(h)
+            && this.players.some(op => op.isAlive && op.id !== owner.id && op.position.distanceTo(h) === 1)
+          );
+          if (owner.gold < 2 || !hasValidTile) { isPlayable = false; requirementsMet = false; }
         }
         // Free Hugs T-Shirt [N]: unplayable when no adjacent opponent or insufficient gold
         if (card.name === 'Free Hugs T-Shirt [N]') {
@@ -3762,6 +4356,24 @@ export class Game implements IGame {
       bonusText: card.bonus,
       description: card.description,
     };
+  }
+
+  private hasDiscardPreconditionMet(owner: Player, behavior: import('./cards/CardBehavior').Behavior | undefined): boolean {
+    if (!behavior) return true;
+
+    // Discard-first patterns require cards in hand now.
+    if (behavior.discardForGold) {
+      return owner.cardsInHand.length >= 1;
+    }
+    if (behavior.discardAndDraw) {
+      return owner.cardsInHand.length >= behavior.discardAndDraw.discard;
+    }
+    if (behavior.discardAllDrawSame) {
+      return owner.cardsInHand.length >= 1;
+    }
+
+    // Draw-then-discard flows are intentionally allowed by request.
+    return true;
   }
 
   private playerToModel(p: Player, viewerId: PlayerId): PlayerModel {
@@ -3848,6 +4460,7 @@ export class Game implements IGame {
       q: h.q,
       r: h.r,
       tileId: this.board.getTileID(h),
+      dispId: this.board.getDispID(h),
       walls: this.board.getWalls(h),
     }));
 
@@ -4027,6 +4640,14 @@ export class Game implements IGame {
         return this.board.getAllHexes()
           .filter(h => !this.isPlayerAt(h) && !this.isZombieAt(h))
           .map(h => h.key());
+      case 'place_bait_adjacent_opponent':
+        if (!player) return [];
+        return this.board.getAllHexes()
+          .filter(h =>
+            !this.isPlayerAt(h) && !this.isZombieAt(h) && !this.board.hasTrap(h) && !this.board.hasBait(h)
+            && this.players.some(op => op.isAlive && op.id !== player.id && op.position.distanceTo(h) === 1)
+          )
+          .map(h => h.key());
       case 'move_player_step1':
         // Highlight all alive non-passed players (excluding the activating player)
         if (!player) return [];
@@ -4045,7 +4666,7 @@ export class Game implements IGame {
         if (!player) return [];
         const healRoom = getTileRoom(player.position.q, player.position.r);
         return this.players
-          .filter(pl => pl.isAlive && pl.id !== player.id && pl.hitPoints <= 3 &&
+          .filter(pl => pl.isAlive && pl.id !== player.id && pl.hitPoints < 5 &&
             getTileRoom(pl.position.q, pl.position.r) === healRoom)
           .map(pl => pl.position.key());
       }
@@ -4165,5 +4786,35 @@ export class Game implements IGame {
         return [];
       }
     }
+  }
+
+  /**
+   * Auto-resolve AI player placement during placement phase.
+   */
+  public autoResolvePlacement(): void {
+    if (!this._placementPhase) return;
+    const p = this.getCurrentPlayer();
+    if (!p || !p.isBot || p.isPlaced) return;
+
+    // Find valid placement hexes (on board, not occupied, not adjacent to players)
+    const validHexes: HexCoordinate[] = [];
+    for (const hex of this.board.getAllHexes()) {
+      if (!this.board.isWithinBounds(hex)) continue;
+      if (this.isPlayerAt(hex)) continue;
+      const neighbors = this.board.getNeighbors(hex);
+      if (neighbors.some(n => this.isPlayerAt(n))) continue;
+      validHexes.push(hex);
+    }
+
+    if (validHexes.length === 0) {
+      this.log(`${p.name} (AI): No valid placement positions found!`);
+      return;
+    }
+
+    // Use AIPlayer to select best position
+    const aiPlayer = new AIPlayer(p, this);
+    const selectedHex = aiPlayer.selectPlacementPosition(validHexes);
+
+    this.choosePlacementHex(p.id, selectedHex);
   }
 }

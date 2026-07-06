@@ -4,8 +4,8 @@ import { LockerId } from '../../common/LockerId';
 export const LOCKER_DATA: LockerData[] = [
     {
         id: LockerId.OUJI_BOARD,
-        name: 'Ouji Board',
-        bonusGold: 5,
+        name: 'Ouija Board',
+        bonusGold: 2,
         nonGoldBonus: '2 SP',
         abilities: [
             { type: 'Action', effect: 'Pay 1 gold to turn 1 SP into 2 NP' },
@@ -32,7 +32,7 @@ export const LOCKER_DATA: LockerData[] = [
     {
         id: LockerId.ROLLER_BACKPACK,
         name: 'Roller Backpack',
-        bonusGold: 9,
+        bonusGold: 8,
         nonGoldBonus: '2 NP',
         abilities: [
             { type: 'Passive', effect: 'When you gain NP, gain 2 gold' },
@@ -135,7 +135,7 @@ export const LOCKER_DATA: LockerData[] = [
     {
         id: LockerId.SCOUT_TRAINING,
         name: 'Scout Training',
-        bonusGold: 0,
+        bonusGold: 2,
         nonGoldBonus: '1 GP;-1 SP',
         startingAction: 'Place one free trap',
         abilities: [

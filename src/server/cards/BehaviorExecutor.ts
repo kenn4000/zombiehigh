@@ -337,13 +337,13 @@ export class BehaviorExecutor {
     // --- Move a zombie ---
     if (behavior.moveZombie) {
       if (behavior.moveZombie.direction === 'toLowestTile') {
-        // Move a neighbor zombie to the lowest available tileID hex
+        // Move a neighbor zombie to the lowest available display-ID hex
         const neighbors = game.board.getNeighbors(player.position);
         const adjZombie = (game as any).getZombies?.()?.find?.(
           (z: any) => z.isAlive && neighbors.some((n: any) => n.equals(z.position)),
         );
         if (adjZombie) {
-          const tiles = game.board.getTilesInIDOrder();
+          const tiles = game.board.getTilesInDispIDOrder().filter(h => game.board.getDispID(h) != null);
           const target = tiles.find(h => !game.isPlayerAt(h) && !game.isZombieAt(h));
           if (target) {
             adjZombie.position = target;

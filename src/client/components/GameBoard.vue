@@ -70,6 +70,7 @@
     <text
       v-for="tile in unoccupiedTiles"
       :key="'tnum-' + tile.key"
+      v-if="tile.dispId !== null"
       :x="tile.cx"
       :y="tile.cy + 4"
       text-anchor="middle"
@@ -77,7 +78,7 @@
       font-size="10"
       font-weight="normal"
       pointer-events="none"
-    >{{ tile.tileId }}</text>
+    >{{ tile.dispId }}</text>
 
     <!-- Layer 2: Baits (fish skeleton icon) -->
     <g

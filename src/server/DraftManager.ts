@@ -154,6 +154,10 @@ export class DraftManager {
     // All three combat rolls use the same convention: d6 <= rate = success (higher = more likely).
     // Trap formula: roll <= trapSuccessRate → kills zombie (higher = easier; abilityScore 4 → rate 5).
     switch (hero.id) {
+      case HeroId.GYM_COACH:
+        p.barricadeFailRate = 2;
+        p.trapSuccessRate = 2;
+        break;
       case HeroId.BARRY_CADE:
         p.trapSuccessRate = 3;    // 2-trap ability → harder traps (roll ≤ 3 = 50%)
         break;
@@ -163,8 +167,15 @@ export class DraftManager {
         p.trapLimit = 3;         // Trap Limit +1
         break;
       case HeroId.ARCHY_TECT:
-        p.barricadeFailRate = 4; // 4-barricade ability → stronger barricades
+        p.barricadeFailRate = 5; // 5-barricade ability → stronger barricades
+        p.trapSuccessRate = 3;
         p.barricadeLimit = 4;    // Barricade Limit +1
+        break;
+      case HeroId.BLOODTHIRSTER:
+        p.trapSuccessRate = 2;
+        break;
+      case HeroId.BUNGLER:
+        p.trapSuccessRate = 3;
         break;
       case HeroId.LOAN_WOLF:
         p.trapSuccessRate = 5;   // 4-trap ability → better traps

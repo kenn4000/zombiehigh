@@ -3,6 +3,7 @@ import { edgeKey } from './Edge';
 import { Barricade } from './Barricade';
 import { Trap } from './Trap';
 import { PlayerId } from '../common/Types';
+import { getTileRoom } from '../common/RoomLookup';
 
 export type WallFlags = { top: boolean; right: boolean; bottom: boolean; left: boolean };
 
@@ -135,6 +136,38 @@ const NAMED_TILE_IDS: Map<string, number> = new Map([
   ['1,9', 50], ['2,9', 41], ['4,9', 31], ['5,9', 40], ['6,9', 49], ['7,9', 30], ['8,9', 39], ['9,9', 58],
 ]);
 
+type DispCell = number | 'x' | 'z';
+
+/**
+ * Per-tile display IDs shown on the board. `x` = inaccessible (no tile),
+ * `z` = no zombie spawn tile (display nothing).
+ */
+const DISP_LAYOUT: ReadonlyArray<ReadonlyArray<DispCell>> = [
+  ['x', 'x', 3, 9, 'z', 'z', 'z', 6, 2, 1, 'x'],
+  [4, 2, 1, 6, 'x', 'x', 'x', 7, 4, 3, 5],
+  [8, 5, 7, 10, 'x', 'x', 'x', 'z', 'x', 'x', 'z'],
+  ['z', 'x', 'x', 'z', 2, 'x', 'z', 'z', 'x', 3, 6],
+  [3, 1, 'x', 16, 11, 7, 12, 'x', 'x', 2, 1],
+  [2, 4, 'z', 15, 5, 4, 6, 3, 'z', 5, 4],
+  [4, 2, 'z', 'x', 10, 8, 9, 13, 'z', 'x', 'z'],
+  [1, 3, 'x', 'x', 1, 'z', 'x', 17, 'z', 'x', 'z'],
+  [3, 5, 4, 6, 6, 4, 5, 7, 5, 4, 6],
+  ['x', 1, 2, 'x', 2, 1, 3, 3, 2, 1, 'x'],
+];
+
+const DISP_ID_BY_KEY: Map<string, number | null> = (() => {
+  const m = new Map<string, number | null>();
+  for (let r = 0; r < DISP_LAYOUT.length; r++) {
+    const row = DISP_LAYOUT[r];
+    for (let q = 0; q < row.length; q++) {
+      const cell = row[q];
+      if (cell === 'x') continue;
+      m.set(`${q},${r}`, cell === 'z' ? null : cell);
+    }
+  }
+  return m;
+})();
+
 function fullWalls(partial: Partial<WallFlags>): WallFlags {
   return {
     top: partial.top ?? false,
@@ -167,6 +200,8 @@ export class Board {
   private readonly tilesByID: HexCoordinate[] = [];
   /** hex.key() → tileID */
   private readonly tileIDByKey: Map<string, number> = new Map();
+  /** hex.key() → display ID (null means no display/no spawn) */
+  private readonly dispIDByKey: Map<string, number | null> = new Map();
 
   /** edgeKey → Barricade */
   private readonly barricades: Map<string, Barricade> = new Map();
@@ -183,6 +218,7 @@ export class Board {
       const h = new HexCoordinate(q, r);
       const k = h.key();
       this.tileWalls.set(k, fullWalls(partial));
+      this.dispIDByKey.set(k, DISP_ID_BY_KEY.get(k) ?? null);
       const namedId = NAMED_TILE_IDS.get(k);
       if (namedId !== undefined) {
         this.tileIDByKey.set(k, namedId);
@@ -209,6 +245,10 @@ export class Board {
     return this.tileIDByKey.get(h.key()) ?? -1;
   }
 
+  getDispID(h: HexCoordinate): number | null {
+    return this.dispIDByKey.get(h.key()) ?? null;
+  }
+
   getTileByID(tileID: number): HexCoordinate | undefined {
     // tilesByID is sorted by ID; IDs are 1-based and sequential.
     return this.tilesByID[tileID - 1];
@@ -216,6 +256,23 @@ export class Board {
 
   getTilesInIDOrder(): HexCoordinate[] {
     return [...this.tilesByID];
+  }
+
+  /** Tiles ordered by display ID (null display IDs sorted last, then tileID tiebreak). */
+  getTilesInDispIDOrder(): HexCoordinate[] {
+    return [...this.tilesByID].sort((a, b) => {
+      const ad = this.getDispID(a);
+      const bd = this.getDispID(b);
+      if (ad == null && bd == null) return this.getTileID(a) - this.getTileID(b);
+      if (ad == null) return 1;
+      if (bd == null) return -1;
+      return ad !== bd ? ad - bd : this.getTileID(a) - this.getTileID(b);
+    });
+  }
+
+  /** Spawn-eligible room tiles (non-null display IDs), ordered by display ID then tileID. */
+  getRoomSpawnTiles(roomId: string): HexCoordinate[] {
+    return this.getTilesInDispIDOrder().filter(h => getTileRoom(h.q, h.r) === roomId && this.getDispID(h) != null);
   }
 
   getAllHexes(): HexCoordinate[] {

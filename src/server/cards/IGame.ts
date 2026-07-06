@@ -20,7 +20,7 @@ export interface IGame {
   /** Draw N cards from the deck into the player's temporary hand; player must then keep K of them. */
   startDrawKeepFromTemp(player: Player, draw: number, keep: number): void;
 
-  /** Spawn N zombies on the board at lowest available tileIDs. */
+  /** Spawn N zombies via room-roll routing onto lowest available room display-ID tiles. */
   spawnZombies(count: number): void;
 
   /**

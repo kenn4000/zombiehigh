@@ -199,7 +199,7 @@ export type Behavior = {
   /** Teleport to any hex within radius tiles. */
   teleport?: { radius: number };
 
-  /** Move a zombie (direction or to lowest tileID). */
+  /** Move a zombie (direction or to lowest display-ID tile). */
   moveZombie?: { direction: 'awayFromPlayer' | 'toLowestTile'; steps?: number };
 
   /** Lose HP to kill all adjacent zombies. Gain SP per kill. */

@@ -96,7 +96,7 @@ router.post('/api/player-input/:playerId', (req: Request, res: Response) => {
     }
 
     case 'select_locker': {
-      if (phase === Phase.ACTION) {
+      if (game.hasPendingLockerChoice(pid)) {
         // Resolve pending locker item choice during action phase
         game.resolveLockerChoice(pid, input.lockerId);
       } else {
