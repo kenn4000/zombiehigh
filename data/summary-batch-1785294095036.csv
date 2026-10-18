@@ -1,0 +1,5 @@
+Player Count,Simulations,Completed,Failed,No Winner,Timed Out,Success Rate,Expected Win Rate
+2,10000,10000,0,0,0,100.00%,50.00%
+3,10000,10000,0,0,0,100.00%,33.33%
+4,10000,10000,0,0,0,100.00%,25.00%
+5,10000,10000,0,0,0,100.00%,20.00%

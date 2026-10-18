@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"name": "zombiegame",
+			"path": "../../zombiegame"
+		}
+	],
+	"settings": {
+		"java.configuration.updateBuildConfiguration": "automatic",
+		"git.ignoreLimitWarning": true
+	}
+}

@@ -1,0 +1,30 @@
+services:
+  zombie-high:
+    build: .
+    image: zombie-high:latest
+    expose:
+      - "8080"
+    volumes:
+      - game-data:/app/db
+    environment:
+      - NODE_ENV=production
+      - PORT=8080
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      # Mount your SSL certificates here.
+      # Example with Let's Encrypt: replace ./nginx/ssl with /etc/letsencrypt
+      - ./nginx/ssl:/etc/ssl:ro
+    depends_on:
+      - zombie-high
+    restart: unless-stopped
+
+volumes:
+  game-data:
+    driver: local

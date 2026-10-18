@@ -1,0 +1,39 @@
+{
+  "before": {
+    "playerHealth": 3,
+    "zombie": {
+      "x": 3,
+      "y": 1,
+      "hasZombie": true,
+      "steps": 3
+    }
+  },
+  "after": {
+    "playerHealth": 3,
+    "boardZombies": [
+      {
+        "x": 3,
+        "y": 1,
+        "steps": 3
+      }
+    ],
+    "playerPos": {
+      "id": "c1-1",
+      "x": 1,
+      "y": 1,
+      "roomId": "Science Lab",
+      "spawnId": "",
+      "isHole": false,
+      "hasZombie": false,
+      "zombieId": null,
+      "zombieStepsLeft": null,
+      "structureType": "player",
+      "structureOwnerId": "ec3a2285-b4d5-4d53-9903-05772c884ee9",
+      "structureData": {
+        "health": 3
+      },
+      "ownerId": "ec3a2285-b4d5-4d53-9903-05772c884ee9"
+    },
+    "zombieTarget": null
+  }
+}
