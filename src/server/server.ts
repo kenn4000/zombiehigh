@@ -10,6 +10,8 @@ import { CardDrawer } from '../game/cards/CardDrawer';
 import { applyLockerCard, getLockerData } from '../game/cards/CardIndex/LockerDeck';
 import { v4 as uuidv4 } from 'uuid';
 import { createRuntimeGame } from './gameFactory';
+import { installLobbyRoutes, isLobbyMatch, matchMember } from './lobbies';
+import fs from 'fs';
 
 export const app = express();
 export const server = createServer(app);
@@ -71,11 +73,29 @@ app.use(express.json());
 app.use('/card-art', express.static(path.join(publicDir, 'card-art')));
 app.use(express.static(publicDir));
 
+// ===== LOBBY MATCHES =====
+installLobbyRoutes(app, room => {
+  const runtime = createRuntimeGame({
+    humanNames: room.members.map(m => m.name), cpuCount: room.bots,
+    difficultyLevels: Array.from({ length: room.bots }, () => room.difficulty),
+    settings: { firstCardFreeNightDraft: room.firstCardFreeNightDraft, reshuffleDeck: room.reshuffleDeck }
+  });
+  const gameId = uuidv4();
+  const used = new Set(room.members.map(m => m.color));
+  const palette = ['red','blue','green','yellow','cyan','magenta','orange','purple'];
+  runtime.players.forEach((p,i) => {
+    const color = i < room.members.length ? room.members[i].color : palette.find(c => !used.has(c))!;
+    (p as any).color = color; used.add(color);
+  });
+  registerGameRuntime(gameId, runtime.game, runtime.gameManager);
+  return { gameId, playerIds: runtime.players.slice(0, room.members.length).map(p => p.id) };
+});
+
 // ===== API ROUTES =====
 
 // Get all games
 app.get('/api/games', (req, res) => {
-  const gameList = Array.from(games.entries()).map(([id, game]) => ({
+  const gameList = Array.from(games.entries()).filter(([id]) => !isLobbyMatch(id)).map(([id, game]) => ({
     id,
     phase: game.phase || 'setup',
     playerCount: game.players.length,
@@ -466,13 +486,22 @@ app.post('/api/game/:gameId/selection/complete', (req, res) => {
   return res.json({ success: true, game });
 });
 
+// Serve the production web client on a shared host as well as in the desktop shell.
+const distDir = path.resolve(projectRoot, 'dist');
+if (fs.existsSync(path.join(distDir, 'index.html'))) {
+  app.use(express.static(distDir, { index: false }));
+  app.get(['/', '/game/:gameId', '/spectator/:gameId'], (_req, res) => {
+    res.sendFile(path.join(distDir, 'index.html'));
+  });
+}
+
 // ===== WEBSOCKET =====
 wss.on('connection', (ws, req) => {
   const url = new URL(req.url!, `http://${req.headers.host}`);
   const gameId = url.searchParams.get('gameId');
   const playerId = url.searchParams.get('playerId');
   
-  if (!gameId || !playerId) {
+  if (!gameId || !playerId || (isLobbyMatch(gameId) && matchMember(gameId, req.headers.cookie)?.playerId !== playerId)) {
     ws.close();
     return;
   }
@@ -507,7 +536,7 @@ wss.on('connection', (ws, req) => {
 
   ws.on('close', () => {
     const playerMap = gamePlayers.get(gameId);
-    if (playerMap) {
+    if (playerMap?.get(playerId) === ws) {
       playerMap.delete(playerId);
     }
   });

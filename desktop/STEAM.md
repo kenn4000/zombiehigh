@@ -69,3 +69,31 @@ verify rights to the original board game, title and all assets; audit third
 party licenses; review dependency security; replace the default executable
 icon/version metadata; consider signing; create store assets and disclosures;
 complete Steamworks app review and gameplay validation.
+
+
+## Lobby beta (second pass)
+
+Front Desk now uses room codes, public/private rooms, guest ready status, host
+CPU settings, and automatic transition to the existing game route. The original
+link-based lobby remains available for developer regression at /?legacy=1.
+The lobby API uses private random membership tokens and sets a per-game HttpOnly
+cookie to authorize existing game actions and WebSocket connections. A single
+server owns the entire match; different machines must connect to the same HTTPS
+host. Local mode does not expose a network listener. A shared browser profile
+should use separate profiles for separate seats because match cookies are shared.
+
+Deploy this branch's Dockerfile to a single persistent-running HTTPS service
+with WebSocket upgrades (e.g. Railway). Set PORT to the hosting service's port.
+Set ZOMBIEHIGH_SERVER_URL to its HTTPS origin when running npm run desktop:build
+to bake the online endpoint into the desktop candidate; for a local developer
+test, set the same environment variable before launching the executable. This
+adds a Play menu to switch between online and offline. The build without this
+setting remains local only. Do not ship an arbitrary or untrusted origin.
+
+This is a lobby/network prototype, not release-ready online multiplayer.
+Game payloads still include full state including potentially hidden cards.
+Before public internet deployment, implement player-specific state filtering,
+disable the legacy creation endpoint in production, add rate limiting and
+session expiration/cleanup, reconnect and abandonment handling, and validate
+with distinct machines. Rooms and matches are in memory and restart loses them.
+Steam identity, friend invites, and Steam networking are not implemented.

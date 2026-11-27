@@ -8,12 +8,21 @@ app.setName('Zombie High');
 app.setAppUserModelId('com.zombiehigh.game');
 let local;
 let stopping = false;
+let onlineOrigin;
+function readOnlineOrigin() {
+  let raw = process.env.ZOMBIEHIGH_SERVER_URL;
+  try { raw ||= require('./online-origin.json').url; } catch {}
+  if (!raw) return;
+  const u = new URL(raw);
+  if (u.protocol !== 'https:' || u.username || u.password || u.pathname !== '/' || u.search || u.hash) throw new Error('Online server must be a trusted HTTPS origin');
+  return u.origin;
+}
 const prefs = { nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true };
 
 function isGamePage(raw) {
   try {
     const url = new URL(raw);
-    return local && url.origin === local.origin
+    return local && (url.origin === local.origin || url.origin === onlineOrigin)
       && (url.pathname === '/' || /^\/(game|spectator)\/[^/]+\/?$/.test(url.pathname));
   } catch { return false; }
 }
@@ -37,7 +46,7 @@ app.on('web-contents-created', (_event, contents) => {
 
 async function launch() {
   local = await startLocalServer(app.getAppPath());
-  Menu.setApplicationMenu(null);
+  onlineOrigin = readOnlineOrigin();
   session.defaultSession.setPermissionRequestHandler((contents, permission, callback) => {
     callback(permission === 'clipboard-sanitized-write' && isGamePage(contents.getURL()));
   });
@@ -51,7 +60,18 @@ async function launch() {
       event.preventDefault();
     }
   });
-  await window.loadURL(local.origin + '/');
+  const smoke = process.argv.includes('--desktop-smoke');
+  if (onlineOrigin && !smoke) {
+    Menu.setApplicationMenu(Menu.buildFromTemplate([{label:'Play',submenu:[
+      {label:'Online front desk',click:()=>window.loadURL(onlineOrigin+'/')},
+      {label:'Offline front desk',click:()=>window.loadURL(local.origin+'/')},
+      {role:'quit'}
+    ]}]));
+    await window.loadURL(onlineOrigin+'/').catch(()=>window.loadURL(local.origin+'/'));
+  } else {
+    Menu.setApplicationMenu(null);
+    await window.loadURL(local.origin + '/');
+  }
   if (process.argv.includes('--desktop-smoke')) {
     // CI verifies the packaged runtime actually mounts the existing Vue lobby.
     const deadline = Date.now() + 30000;

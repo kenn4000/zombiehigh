@@ -28,9 +28,18 @@ fs.rmSync(output, { recursive: true, force: true });
 fs.mkdirSync(runtimeDir, { recursive: true });
 fs.writeFileSync(path.join(runtimeDir, 'package.json'), JSON.stringify({ name: 'zombie-high-electron-runtime', version: '1.0.0', private: true }));
 npm(['install', '--no-save', '--no-package-lock', 'electron@' + electronVersion], runtimeDir, {
-  ...process.env, ELECTRON_SKIP_BINARY_DOWNLOAD: '', npm_config_platform: 'win32', npm_config_arch: 'x64'
+  ...process.env, npm_config_ignore_scripts: 'false'
 });
-fs.cpSync(path.join(runtimeDir, 'node_modules', 'electron', 'dist'), depot, { recursive: true });
+// Electron may defer binary download until the CLI is first invoked.
+const electronModule = path.join(runtimeDir, 'node_modules', 'electron');
+const electronEnv = { ...process.env };
+delete electronEnv.ELECTRON_SKIP_BINARY_DOWNLOAD;
+delete electronEnv.npm_config_ignore_scripts;
+if (!fs.existsSync(path.join(electronModule, 'dist', 'electron.exe'))) {
+  const install = spawnSync(process.execPath, [path.join(electronModule, 'install.js')], {cwd: electronModule, env: electronEnv, stdio:'inherit'});
+  if (install.status !== 0 || install.error) throw new Error('Electron binary install failed: ' + (install.error || install.status));
+}
+fs.cpSync(path.join(electronModule, 'dist'), depot, { recursive: true });
 fs.renameSync(path.join(depot, 'electron.exe'), path.join(depot, 'ZombieHigh.exe'));
 if (fs.existsSync(path.join(depot, 'electron_wer.dll'))) {
   fs.renameSync(path.join(depot, 'electron_wer.dll'), path.join(depot, 'ZombieHigh_wer.dll'));
@@ -51,5 +60,6 @@ manifest.productName = 'Zombie High';
 manifest.private = true;
 fs.writeFileSync(path.join(staged, 'package.json'), JSON.stringify(manifest, null, 2));
 fs.copyFileSync(path.join(root, 'package-lock.json'), path.join(staged, 'package-lock.json'));
+if (process.env.ZOMBIEHIGH_SERVER_URL) fs.writeFileSync(path.join(staged,'desktop','online-origin.json'),JSON.stringify({url:process.env.ZOMBIEHIGH_SERVER_URL}));
 npm(['ci', '--omit=dev'], staged, { ...process.env, NODE_ENV: 'production' });
 console.log('Steam depot candidate: ' + depot);

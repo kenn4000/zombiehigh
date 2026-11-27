@@ -15,7 +15,7 @@
       </div>
     </div>
 
-    <LobbyView v-else-if="!gameManager && !isLoadingGame && !isGameRoute" />
+    <component :is="legacyLobby ? LobbyView : MultiplayerLobby" v-else-if="!gameManager && !isLoadingGame && !isGameRoute" />
 
     <GameView 
       v-else-if="gameManager && playerId"
@@ -50,6 +50,8 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import LobbyView from '../game/Views/LobbyView.vue';
+import MultiplayerLobby from '../game/Views/MultiplayerLobby.vue';
+const legacyLobby = new URLSearchParams(window.location.search).get('legacy') === '1';
 import GameView from '../game/Views/GameView.vue';
 import { GameManager } from '../game/index';
 import { hydrateGame } from '../game/hydrateGame';
