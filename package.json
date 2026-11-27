@@ -14,7 +14,9 @@
     "clean": "npx rimraf build dist",
     "test": "mocha --require tsx/cjs 'tests/**/*.test.ts'",
     "test:multiplayer-playtest": "mocha --require tsx/cjs tests/multiplayer-action-playtest.test.ts",
-    "start": "node build/server/server/server.js"
+    "start": "node build/server/server/server.js",
+    "desktop:build": "node desktop/package-win.cjs",
+    "desktop:smoke": "node --test desktop/smoke.test.cjs"
   },
   "dependencies": {
     "@vue/runtime-dom": "^3.5.40",
