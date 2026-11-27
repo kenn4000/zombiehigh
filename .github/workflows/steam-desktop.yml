@@ -1,0 +1,55 @@
+name: Steam desktop candidate
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'desktop/**'
+      - 'src/**'
+      - 'public/**'
+      - 'package*.json'
+      - 'tsconfig*.json'
+      - 'webpack.config.js'
+      - '.github/workflows/steam-desktop.yml'
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+  desktop:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run desktop:build
+      - run: npm run desktop:smoke
+      - name: Launch packaged executable and verify Vue lobby
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD 'build/steam/ZombieHigh-win32-x64/ZombieHigh.exe'
+          $p = Start-Process -FilePath $exe -ArgumentList '--desktop-smoke' -PassThru
+          if (-not $p.WaitForExit(60000)) {
+            Stop-Process -Id $p.Id -Force
+            throw 'Desktop launch timed out'
+          }
+          if ($p.ExitCode -ne 0) { throw "Desktop launch failed: $($p.ExitCode)" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ZombieHigh-win64-Steam-candidate
+          path: build/steam/ZombieHigh-win32-x64/
+          if-no-files-found: error
+          retention-days: 14
